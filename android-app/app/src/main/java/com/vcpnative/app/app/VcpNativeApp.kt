@@ -3,6 +3,7 @@ package com.vcpnative.app.app
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -19,15 +20,19 @@ import com.vcpnative.app.feature.chat.ChatRoute
 import com.vcpnative.app.feature.topics.TopicsRoute
 
 private object VcpRoutes {
+    const val ARG_AGENT_ID = "agentId"
+    const val ARG_TOPIC_ID = "topicId"
+    const val ARG_ATTACHMENT_ID = "attachmentId"
+
     const val BOOTSTRAP = "bootstrap"
     const val SETUP_GATE = "setup-gate"
     const val SETTINGS_SETUP = "settings/setup"
     const val SETTINGS_STANDALONE = "settings/standalone"
     const val AGENTS = "workspace/agents"
-    const val AGENT_EDITOR_PATTERN = "workspace/agent/{agentId}"
-    const val TOPICS_PATTERN = "workspace/topics/{agentId}"
-    const val CHAT_PATTERN = "workspace/chat/{agentId}/{topicId}"
-    const val ATTACHMENT_PATTERN = "attachment/{attachmentId}"
+    const val AGENT_EDITOR_PATTERN = "workspace/agent/{$ARG_AGENT_ID}"
+    const val TOPICS_PATTERN = "workspace/topics/{$ARG_AGENT_ID}"
+    const val CHAT_PATTERN = "workspace/chat/{$ARG_AGENT_ID}/{$ARG_TOPIC_ID}"
+    const val ATTACHMENT_PATTERN = "attachment/{$ARG_ATTACHMENT_ID}"
 
     fun agentEditor(agentId: String): String = "workspace/agent/$agentId"
 
@@ -36,6 +41,14 @@ private object VcpRoutes {
     fun chat(agentId: String, topicId: String): String = "workspace/chat/$agentId/$topicId"
 
     fun attachment(attachmentId: String): String = "attachment/$attachmentId"
+}
+
+private fun navStringArgument(name: String) = navArgument(name) { type = NavType.StringType }
+
+private fun NavBackStackEntry.requireStringArg(name: String): String {
+    return checkNotNull(arguments?.getString(name)) {
+        "Missing navigation argument: $name"
+    }
 }
 
 @Composable
@@ -114,20 +127,20 @@ fun VcpNativeApp(
 
         composable(
             route = VcpRoutes.AGENT_EDITOR_PATTERN,
-            arguments = listOf(navArgument("agentId") { type = NavType.StringType }),
+            arguments = listOf(navStringArgument(VcpRoutes.ARG_AGENT_ID)),
         ) { backStackEntry ->
             AgentEditorRoute(
                 appContainer = appContainer,
-                agentId = backStackEntry.arguments?.getString("agentId").orEmpty(),
+                agentId = backStackEntry.requireStringArg(VcpRoutes.ARG_AGENT_ID),
                 onNavigateBack = { navController.navigateUp() },
             )
         }
 
         composable(
             route = VcpRoutes.TOPICS_PATTERN,
-            arguments = listOf(navArgument("agentId") { type = NavType.StringType }),
+            arguments = listOf(navStringArgument(VcpRoutes.ARG_AGENT_ID)),
         ) { backStackEntry ->
-            val agentId = backStackEntry.arguments?.getString("agentId").orEmpty()
+            val agentId = backStackEntry.requireStringArg(VcpRoutes.ARG_AGENT_ID)
             TopicsRoute(
                 appContainer = appContainer,
                 agentId = agentId,
@@ -143,12 +156,12 @@ fun VcpNativeApp(
         composable(
             route = VcpRoutes.CHAT_PATTERN,
             arguments = listOf(
-                navArgument("agentId") { type = NavType.StringType },
-                navArgument("topicId") { type = NavType.StringType },
+                navStringArgument(VcpRoutes.ARG_AGENT_ID),
+                navStringArgument(VcpRoutes.ARG_TOPIC_ID),
             ),
         ) { backStackEntry ->
-            val agentId = backStackEntry.arguments?.getString("agentId").orEmpty()
-            val topicId = backStackEntry.arguments?.getString("topicId").orEmpty()
+            val agentId = backStackEntry.requireStringArg(VcpRoutes.ARG_AGENT_ID)
+            val topicId = backStackEntry.requireStringArg(VcpRoutes.ARG_TOPIC_ID)
             ChatRoute(
                 appContainer = appContainer,
                 agentId = agentId,
@@ -168,11 +181,11 @@ fun VcpNativeApp(
 
         composable(
             route = VcpRoutes.ATTACHMENT_PATTERN,
-            arguments = listOf(navArgument("attachmentId") { type = NavType.StringType }),
+            arguments = listOf(navStringArgument(VcpRoutes.ARG_ATTACHMENT_ID)),
         ) { backStackEntry ->
             AttachmentViewerScreen(
                 appContainer = appContainer,
-                attachmentId = backStackEntry.arguments?.getString("attachmentId").orEmpty(),
+                attachmentId = backStackEntry.requireStringArg(VcpRoutes.ARG_ATTACHMENT_ID),
                 onNavigateBack = { navController.navigateUp() },
             )
         }

@@ -569,7 +569,7 @@ private fun AgentEditorScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        uiState.availableModels.take(8).forEach { model ->
+                        uiState.availableModels.forEach { model ->
                             OutlinedButton(
                                 onClick = { onModelChange(model.id) },
                                 enabled = !uiState.isSaving,
@@ -587,13 +587,6 @@ private fun AgentEditorScreen(
                                 }
                             }
                         }
-                    }
-                    if (uiState.availableModels.size > 8) {
-                        Text(
-                            text = "其余 ${uiState.availableModels.size - 8} 个模型已省略显示。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
                 OutlinedTextField(

@@ -2153,9 +2153,10 @@ private fun BrowserHtmlBlockView(
             wasTruncated = isProbablyTruncatedBrowserHtml(html),
         )
     }
-    var contentHeightPx by rememberSaveable(html) { mutableIntStateOf(0) }
+    val estimatedHeightPx = with(density) { estimateBrowserHtmlHeightDp(html).roundToPx() }
+    var contentHeightPx by rememberSaveable(html) { mutableIntStateOf(estimatedHeightPx) }
     var loadedHtml by rememberSaveable(html) { mutableStateOf<String?>(null) }
-    val minHeightPx = with(density) { 32.dp.roundToPx() }
+    val minHeightPx = with(density) { 48.dp.roundToPx() }
     val wrappedHtml = remember(renderState.html) {
         buildBrowserHtmlDocument(renderState.html)
     }
@@ -2246,7 +2247,11 @@ private fun BrowserHtmlBlockView(
                                 density = density.density,
                                 minHeightPx = minHeightPx,
                                 onHeightChanged = { heightPx ->
-                                    if (abs(heightPx - contentHeightPx) >= 2) {
+                                    // Only grow from onPageFinished — contentHeight
+                                    // can be 0 before layout completes, which would
+                                    // collapse the view to minHeightPx.  The JS bridge
+                                    // will report the authoritative height shortly.
+                                    if (heightPx > contentHeightPx + 2) {
                                         contentHeightPx = heightPx
                                     }
                                 },
@@ -2939,6 +2944,7 @@ private fun NativeHtmlInlineTextBlock(
                 else -> android.view.Gravity.START
             }
             textView.text = spannable
+            textView.post { textView.requestLayout() }
         },
     )
 }
@@ -3962,6 +3968,7 @@ private fun NativeMarkdownBlockView(
             }
             applyTextStyle(textView, bodyStyle)
             markwon.setMarkdown(textView, normalizedText)
+            textView.post { textView.requestLayout() }
         },
     )
 }
@@ -4206,6 +4213,24 @@ private fun removeLastMatchingTag(
 
     for (index in buffer.indices.reversed()) {
         deque.addLast(buffer[index])
+    }
+}
+
+/**
+ * Estimate a reasonable initial height (in Dp) for browser HTML content so the
+ * WebView does not flash as a tiny 32-48 dp box while waiting for the JS bridge
+ * to report the real height.  The estimate does not need to be precise — it just
+ * needs to be in the right ballpark so the LazyColumn item does not visually
+ * collapse during recycling.
+ */
+private fun estimateBrowserHtmlHeightDp(html: String): androidx.compose.ui.unit.Dp {
+    val len = html.length
+    return when {
+        len < 120 -> 80.dp
+        len < 500 -> 160.dp
+        len < 2000 -> 300.dp
+        len < 6000 -> 420.dp
+        else -> 560.dp
     }
 }
 

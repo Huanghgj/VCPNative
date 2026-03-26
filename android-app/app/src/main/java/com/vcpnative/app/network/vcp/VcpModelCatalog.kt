@@ -10,8 +10,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -56,7 +58,9 @@ class NetworkBackedVcpModelCatalog(
                 .get()
                 .build()
 
-            okHttpClient.newCall(request).execute().use { response ->
+            withContext(Dispatchers.IO) {
+                okHttpClient.newCall(request).execute()
+            }.use { response ->
                 val body = response.body.string()
                 if (!response.isSuccessful) {
                     val errorMessage = extractErrorMessage(body)

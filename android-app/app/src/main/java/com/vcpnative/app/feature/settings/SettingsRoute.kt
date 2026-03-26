@@ -560,7 +560,7 @@ private fun SettingsScreen(
                         Column(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            uiState.availableModels.take(12).forEach { model ->
+                            uiState.availableModels.forEach { model ->
                                 Text(
                                     text = buildString {
                                         append(model.id)
@@ -570,13 +570,6 @@ private fun SettingsScreen(
                                         }
                                     },
                                     style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
-                            if (uiState.availableModels.size > 12) {
-                                Text(
-                                    text = "其余 ${uiState.availableModels.size - 12} 个模型已省略显示。",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }

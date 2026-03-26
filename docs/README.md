@@ -1,6 +1,6 @@
 # VCPNative 文档索引
 
-更新时间：2026-03-25
+更新时间：2026-03-26
 
 当前文档按“先定边界，再定契约，再定范围”的顺序阅读。
 
@@ -97,6 +97,21 @@
 
 - `TASK_PLAN.md`
   执行计划规格。
+
+- `CODE_VS_DOC_ALIGNMENT.md`
+  源码与设计文档对照报告，记录对齐状态、偏离点和技术债务。
+
+- `android-bugfix-tracker-2026-03-26.md`
+  Bug 修复追踪。
+
+- `android-chat-renderer-status-2026-03-26.md`
+  聊天渲染器状态。
+
+- `android-chat-renderer-handoff-2026-03-25.md`
+  聊天渲染器交接记录。
+
+- `android-complete-chat-feature-2026-03-25.md`
+  完整聊天功能补齐记录。
 
 ## 当前结论
 
