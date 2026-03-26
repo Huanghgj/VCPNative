@@ -177,6 +177,12 @@ interface TopicDao {
 
     @Query("UPDATE topics SET updatedAt = :updatedAt WHERE id = :topicId")
     suspend fun touch(topicId: String, updatedAt: Long)
+
+    @Query("UPDATE topics SET title = :title, updatedAt = :updatedAt WHERE id = :topicId")
+    suspend fun updateTitle(topicId: String, title: String, updatedAt: Long)
+
+    @Query("DELETE FROM topics WHERE id = :topicId")
+    suspend fun delete(topicId: String)
 }
 
 @Dao

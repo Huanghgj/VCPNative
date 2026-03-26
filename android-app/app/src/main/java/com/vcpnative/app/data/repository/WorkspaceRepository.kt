@@ -71,6 +71,10 @@ interface WorkspaceRepository {
 
     suspend fun findTopic(topicId: String): TopicEntity?
 
+    suspend fun renameTopic(topicId: String, newTitle: String)
+
+    suspend fun deleteTopic(topicId: String)
+
     suspend fun findMessageAttachment(attachmentId: String): MessageAttachmentEntity?
 
     suspend fun loadMessages(topicId: String): List<MessageEntity>
@@ -227,6 +231,18 @@ class RoomWorkspaceRepository(
     override suspend fun findAgent(agentId: String): AgentEntity? = agentDao.findById(agentId)
 
     override suspend fun findTopic(topicId: String): TopicEntity? = topicDao.findById(topicId)
+
+    override suspend fun renameTopic(topicId: String, newTitle: String) {
+        val topic = topicDao.findById(topicId) ?: error("找不到要重命名的话题。")
+        topicDao.updateTitle(topicId, newTitle, System.currentTimeMillis())
+        syncCompatAgentSnapshot(topic.agentId)
+    }
+
+    override suspend fun deleteTopic(topicId: String) {
+        val topic = topicDao.findById(topicId) ?: error("找不到要删除的话题。")
+        topicDao.delete(topicId)
+        syncCompatAgentSnapshot(topic.agentId)
+    }
 
     override suspend fun findMessageAttachment(attachmentId: String): MessageAttachmentEntity? =
         messageAttachmentDao.findById(attachmentId)

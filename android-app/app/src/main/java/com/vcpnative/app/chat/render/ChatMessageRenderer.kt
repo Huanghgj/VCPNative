@@ -1286,12 +1286,7 @@ private object VcpChatMessageParser {
         text.replace("\r\n", "\n").replace('\r', '\n')
 
     private fun removeSpeakerTags(text: String): String {
-        var output = text
-        val regex = Regex("""^\[(?:(?!\]:\s).)*的发言\]:\s*""")
-        while (regex.containsMatchIn(output)) {
-            output = output.replaceFirst(regex, "")
-        }
-        return output
+        return SPEAKER_TAG_REGEX.replace(text, "")
     }
 
     private fun ensureNewlineAfterCodeBlock(text: String): String =
@@ -1303,7 +1298,7 @@ private object VcpChatMessageParser {
 
             val suffix = trimmed.removePrefix("```")
             val looksLikeLanguageTag = suffix.isNotBlank() &&
-                Regex("""^[A-Za-z0-9_+#.-]+$""").matches(suffix.trim())
+                LANGUAGE_TAG_REGEX.matches(suffix.trim())
 
             if (looksLikeLanguageTag || suffix.isBlank()) {
                 line
@@ -1313,10 +1308,10 @@ private object VcpChatMessageParser {
         }
 
     private fun ensureSpaceAfterTilde(text: String): String =
-        Regex("""(^|[^\w/\\=])~(?![\s~])""").replace(text, "$1~ ")
+        TILDE_SPACE_REGEX.replace(text, "$1~ ")
 
     private fun ensureSeparatorBetweenImgAndCode(text: String): String =
-        Regex("""(<img[^>]+>)\s*(```)""").replace(text, "$1\n\n<!-- VCP-Renderer-Separator -->\n\n$2")
+        IMG_CODE_SEPARATOR_REGEX.replace(text, "$1\n\n<!-- VCP-Renderer-Separator -->\n\n$2")
 
     private fun transformUserSpecialMarkers(text: String): String =
         text.replace(BUTTON_CLICK_REGEX) { matchResult ->
@@ -1416,12 +1411,6 @@ private object VcpChatMessageParser {
 
         val lines = text.lines()
         var inFence = false
-        val listRegex = Regex("""^\s*([-*]|\d+\.)\s+""")
-        val htmlTagRegex = Regex(
-            """^\s*</?(div|p|img|span|a|h[1-6]|ul|ol|li|table|tr|td|th|section|article|header|footer|nav|aside|main|figure|figcaption|blockquote|pre|code|style|script|button|form|input|textarea|select|label|iframe|video|audio|canvas|svg)[\s>/]""",
-            RegexOption.IGNORE_CASE,
-        )
-        val chineseParagraphRegex = Regex("""^[\u4e00-\u9fa5]""")
 
         return lines.joinToString("\n") { line ->
             if (line.trim().startsWith("```")) {
@@ -1437,9 +1426,9 @@ private object VcpChatMessageParser {
             val hasIndentation = line.length > trimmed.length
             if (hasIndentation) {
                 when {
-                    listRegex.containsMatchIn(line) -> line
-                    htmlTagRegex.containsMatchIn(line) -> trimmed
-                    chineseParagraphRegex.containsMatchIn(trimmed) -> trimmed
+                    LIST_ITEM_REGEX.containsMatchIn(line) -> line
+                    HTML_BLOCK_TAG_REGEX.containsMatchIn(line) -> trimmed
+                    CHINESE_PARAGRAPH_REGEX.containsMatchIn(trimmed) -> trimmed
                     else -> line
                 }
             } else {
@@ -1456,7 +1445,7 @@ private object VcpChatMessageParser {
                 ?: false
 
     private fun extractHtmlStartTagName(trimmedLine: String): String? =
-        Regex("""^<(?!/?(?:think|thinking)\b)([a-zA-Z][\w:-]*)\b""", RegexOption.IGNORE_CASE)
+        HTML_START_TAG_NAME_REGEX
             .find(trimmedLine)
             ?.groupValues
             ?.getOrNull(1)
@@ -1479,13 +1468,13 @@ private object VcpChatMessageParser {
         }
 
         if (!looksLikeHtmlContainerStart(trimmed) &&
-            !Regex("""^<(button|input|textarea|select|label)\b""", RegexOption.IGNORE_CASE).containsMatchIn(trimmed)
+            !HTML_FORM_ELEMENT_REGEX.containsMatchIn(trimmed)
         ) {
             return false
         }
 
-        val htmlTagCount = Regex("""</?[a-zA-Z][^>]*>""").findAll(trimmed).count()
-        val containsClosingTag = Regex("""</[a-zA-Z][^>]*>""").containsMatchIn(trimmed)
+        val htmlTagCount = HTML_TAG_REGEX.findAll(trimmed).count()
+        val containsClosingTag = HTML_CLOSING_TAG_REGEX.containsMatchIn(trimmed)
         return htmlTagCount >= 2 || containsClosingTag || '\n' in trimmed
     }
 
@@ -1580,6 +1569,20 @@ private object VcpChatMessageParser {
     private val MERMAID_LANGUAGES = setOf("mermaid", "flowchart", "graph")
     private val BUTTON_CLICK_REGEX = Regex("""\[\[点击按钮:(.*?)\]\]""", setOf(RegexOption.DOT_MATCHES_ALL))
     private val CANVAS_PLACEHOLDER_REGEX = Regex("""\{\{VCPChatCanvas\}\}""")
+    private val SPEAKER_TAG_REGEX = Regex("""^\[(?:(?!\]:\s).)*的发言\]:\s*""", RegexOption.MULTILINE)
+    private val LANGUAGE_TAG_REGEX = Regex("""^[A-Za-z0-9_+#.-]+$""")
+    private val TILDE_SPACE_REGEX = Regex("""(^|[^\w/\\=])~(?![\s~])""")
+    private val IMG_CODE_SEPARATOR_REGEX = Regex("""(<img[^>]+>)\s*(```)""")
+    private val LIST_ITEM_REGEX = Regex("""^\s*([-*]|\d+\.)\s+""")
+    private val HTML_BLOCK_TAG_REGEX = Regex(
+        """^\s*</?(div|p|img|span|a|h[1-6]|ul|ol|li|table|tr|td|th|section|article|header|footer|nav|aside|main|figure|figcaption|blockquote|pre|code|style|script|button|form|input|textarea|select|label|iframe|video|audio|canvas|svg)[\s>/]""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val CHINESE_PARAGRAPH_REGEX = Regex("""^[\u4e00-\u9fa5]""")
+    private val HTML_START_TAG_NAME_REGEX = Regex("""^<(?!/?(?:think|thinking)\b)([a-zA-Z][\w:-]*)\b""", RegexOption.IGNORE_CASE)
+    private val HTML_FORM_ELEMENT_REGEX = Regex("""^<(button|input|textarea|select|label)\b""", RegexOption.IGNORE_CASE)
+    private val HTML_TAG_REGEX = Regex("""</?[a-zA-Z][^>]*>""")
+    private val HTML_CLOSING_TAG_REGEX = Regex("""</[a-zA-Z][^>]*>""")
     private val INLINE_SPECIAL_BLOCK_REGEX = Regex("""\[\[点击按钮:(.*?)\]\]|\{\{VCPChatCanvas\}\}""", setOf(RegexOption.DOT_MATCHES_ALL))
     private val START_END_MARKER_REGEX = Regex("""「始」([\s\S]*?)(「末」|$)""")
     private val markdownImageRegex = Regex("""^!\[([^\]]*)]\(([^)]+)\)$""")
@@ -2287,6 +2290,7 @@ private fun BrowserHtmlBlockView(
                         null,
                     )
                 }
+                applyBrowserHtmlPausedState(webView, pauseDynamicContent)
             },
             onReset = { webView ->
                 webView.stopLoading()
@@ -2878,9 +2882,12 @@ private fun NativeHtmlInlineTextBlock(
     val context = LocalContext.current
     val actionMessageState = rememberUpdatedState(onActionMessage)
     val longPressState = rememberUpdatedState(onLongPress)
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
-    val inlineCodeBackground = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.92f).toArgb()
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val surfaceVariantColor = MaterialTheme.colorScheme.surfaceVariant
+    val textColor = remember(onSurfaceColor) { onSurfaceColor.toArgb() }
+    val linkColor = remember(primaryColor) { primaryColor.toArgb() }
+    val inlineCodeBackground = remember(surfaceVariantColor) { surfaceVariantColor.copy(alpha = 0.92f).toArgb() }
     val spannable = remember(
         nodes,
         styleSheet,
@@ -2889,7 +2896,6 @@ private fun NativeHtmlInlineTextBlock(
         textColor,
         linkColor,
         inlineCodeBackground,
-        context,
     ) {
         buildNativeHtmlSpannable(
             nodes = nodes,
@@ -2944,7 +2950,6 @@ private fun NativeHtmlInlineTextBlock(
                 else -> android.view.Gravity.START
             }
             textView.text = spannable
-            textView.post { textView.requestLayout() }
         },
     )
 }
@@ -3925,8 +3930,10 @@ private fun NativeMarkdownBlockView(
     val actionMessageState = rememberUpdatedState(onActionMessage)
     val longPressState = rememberUpdatedState(onLongPress)
     val bodyStyle = MaterialTheme.typography.bodyLarge
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val textColor = remember(onSurfaceColor) { onSurfaceColor.toArgb() }
+    val linkColor = remember(primaryColor) { primaryColor.toArgb() }
     val normalizedText = remember(text) {
         normalizeNativeMarkdownInput(text)
     }
@@ -3968,7 +3975,6 @@ private fun NativeMarkdownBlockView(
             }
             applyTextStyle(textView, bodyStyle)
             markwon.setMarkdown(textView, normalizedText)
-            textView.post { textView.requestLayout() }
         },
     )
 }
@@ -4073,10 +4079,10 @@ internal fun shouldUseBrowserHtmlRenderer(content: String): Boolean {
         return false
     }
 
-    return Regex("""(?is)<(style|svg|filter|pattern|mask|canvas|iframe|video|audio)\b""").containsMatchIn(content) ||
-        Regex("""(?is)\bon(?:click|mouseover|mouseout|mouseenter|mouseleave|load|error)\s*=""").containsMatchIn(content) ||
-        Regex("""(?is)(@keyframes|animation\s*:|backdrop-filter\s*:|filter\s*:|perspective\s*:|grid-template-columns\s*:|grid-template-rows\s*:|display\s*:\s*grid|display\s*:\s*flex|position\s*:\s*fixed|position\s*:\s*sticky|transform\s*:|clip-path\s*:|radial-gradient\s*\(|linear-gradient\s*\()""").containsMatchIn(content) ||
-        Regex("""(?is)var\s*\(--""").containsMatchIn(content)
+    return BROWSER_HTML_ADVANCED_TAGS_REGEX.containsMatchIn(content) ||
+        BROWSER_HTML_EVENT_HANDLER_REGEX.containsMatchIn(content) ||
+        BROWSER_HTML_CSS_FEATURES_REGEX.containsMatchIn(content) ||
+        BROWSER_HTML_CSS_VAR_REGEX.containsMatchIn(content)
 }
 
 private fun shouldRenderMessageInSafeMode(content: String): Boolean {
@@ -4088,7 +4094,7 @@ private fun shouldRenderMessageInSafeMode(content: String): Boolean {
         return true
     }
 
-    val htmlTagCount = Regex("""</?[a-zA-Z][^>]*>""").findAll(content).take(2_001).count()
+    val htmlTagCount = SAFE_MODE_HTML_TAG_REGEX.findAll(content).take(2_001).count()
     return htmlTagCount > 2_000
 }
 
@@ -4430,6 +4436,11 @@ private fun handleBrowserHtmlNavigation(
 }
 
 private const val BROWSER_HTML_BASE_URL = "https://vcpnative.invalid/"
+private val BROWSER_HTML_ADVANCED_TAGS_REGEX = Regex("""(?is)<(style|svg|filter|pattern|mask|canvas|iframe|video|audio)\b""")
+private val BROWSER_HTML_EVENT_HANDLER_REGEX = Regex("""(?is)\bon(?:click|mouseover|mouseout|mouseenter|mouseleave|load|error)\s*=""")
+private val BROWSER_HTML_CSS_FEATURES_REGEX = Regex("""(?is)(@keyframes|animation\s*:|backdrop-filter\s*:|filter\s*:|perspective\s*:|grid-template-columns\s*:|grid-template-rows\s*:|display\s*:\s*grid|display\s*:\s*flex|position\s*:\s*fixed|position\s*:\s*sticky|transform\s*:|clip-path\s*:|radial-gradient\s*\(|linear-gradient\s*\()""")
+private val BROWSER_HTML_CSS_VAR_REGEX = Regex("""(?is)var\s*\(--""")
+private val SAFE_MODE_HTML_TAG_REGEX = Regex("""</?[a-zA-Z][^>]*>""")
 private const val BROWSER_HTML_BRIDGE_NAME = "VcpNativeBridge"
 private const val BROWSER_HTML_HEIGHT_JS =
     "(function(){if(window.__vcpPostHeight){window.__vcpPostHeight();}return true;})();"

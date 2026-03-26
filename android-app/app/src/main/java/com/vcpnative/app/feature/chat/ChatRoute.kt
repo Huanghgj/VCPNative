@@ -60,12 +60,14 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -719,6 +721,29 @@ private fun ChatScreen(
         messages.lastOrNull { it.role == "assistant" && it.status !in setOf("draft", "streaming") }?.id
     }
 
+    // 方案 B：滚动时全局暂停动态内容，停止后 200ms 恢复
+    var scrollPaused by remember { mutableStateOf(false) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (scrolling) {
+                    scrollPaused = true
+                } else {
+                    kotlinx.coroutines.delay(200)
+                    scrollPaused = false
+                }
+            }
+    }
+
+    // 方案 A：可见性检测 — 获取当前可见 item 的 key 集合
+    val visibleMessageIds by remember {
+        derivedStateOf {
+            listState.layoutInfo.visibleItemsInfo
+                .mapNotNull { it.key as? String }
+                .toSet()
+        }
+    }
+
     LaunchedEffect(messages.lastOrNull()?.id, messages.lastOrNull()?.content, messages.lastOrNull()?.status) {
         if (messages.isNotEmpty()) {
             val lastMessage = messages.last()
@@ -892,7 +917,7 @@ private fun ChatScreen(
                         attachments = attachmentsByMessageId[message.id].orEmpty(),
                         canRegenerateAssistant = !isSending && message.id == latestCompletedAssistantMessageId,
                         isSending = isSending,
-                        pauseDynamicContent = false,
+                        pauseDynamicContent = scrollPaused || message.id !in visibleMessageIds,
                         onSendMessage = onSendMessage,
                         onRetryAssistantMessage = onRetryAssistantMessage,
                         onEditAssistantMessage = onEditAssistantMessage,
@@ -1062,7 +1087,7 @@ private fun MessageBubble(
                 if (showRoleLabel) {
                     Spacer(modifier = Modifier.height(6.dp))
                 }
-                key(message.id, message.status, message.updatedAt, displayContent.hashCode()) {
+                key(message.id, message.status, message.updatedAt) {
                     ChatMessageContent(
                         content = displayContent,
                         mode = if (isStreamingMessage) {
