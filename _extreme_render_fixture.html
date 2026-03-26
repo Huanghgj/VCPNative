@@ -1,0 +1,77 @@
+<div id="vcp-root" style="
+    --primary: #00f2ff;
+    --secondary: #7000ff;
+    --accent: #ff0055;
+    background: #050505;
+    padding: 20px;
+    border-radius: 12px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    color: var(--primary);
+    overflow: hidden;
+    position: relative;
+    border: 2px solid var(--primary);
+    box-shadow: 0 0 50px rgba(0, 242, 255, 0.2);
+    perspective: 1000px;
+">
+
+    <!-- SVG 滤镜定义 (用于故障效果) -->
+    <svg style="position: absolute; width: 0; height: 0;">
+        <defs>
+            <filter id="vcp-glitch-filter">
+                <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="red"/>
+                <feOffset in="red" dx="3" dy="0" result="red-offset"/>
+                <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="green"/>
+                <feOffset in="green" dx="-3" dy="0" result="green-offset"/>
+                <feBlend in="red-offset" in2="green-offset" mode="screen"/>
+            </filter>
+        </defs>
+    </svg>
+
+    <style>
+        @keyframes vcp-spin-3d {
+            from { transform: rotateX(0deg) rotateY(0deg) rotateZ(0deg); }
+            to { transform: rotateX(360deg) rotateY(720deg) rotateZ(360deg); }
+        }
+        @keyframes vcp-scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+        @keyframes vcp-data-flow {
+            0% { stroke-dashoffset: 1000; }
+            100% { stroke-dashoffset: 0; }
+        }
+        @keyframes vcp-bg-pulse {
+            0%, 100% { opacity: 0.1; }
+            50% { opacity: 0.3; }
+        }
+        .vcp-limit-box {
+            position: absolute;
+            border: 1px solid rgba(0, 242, 255, 0.3);
+            animation: vcp-bg-pulse 2s infinite;
+        }
+    </style>
+
+    <!-- 背景装饰：随机分布的边框块 -->
+    <div class="vcp-limit-box" style="top:10%; left:5%; width:40%; height:30%;"></div>
+    <div class="vcp-limit-box" style="bottom:15%; right:10%; width:20%; height:40%;"></div>
+
+    <!-- 扫描线 -->
+    <div style="position:absolute; top:0; left:0; width:100%; height:50px; background:linear-gradient(to bottom, transparent, var(--primary), transparent); opacity:0.1; pointer-events:none; animation: vcp-scanline 3s linear infinite;"></div>
+
+    <div style="position: relative; z-index: 10;">
+        <!-- 头部：系统警告风格 -->
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px;">
+            <div>
+                <div style="font-size: 10px; opacity: 0.7;">STRESS_TEST_MODE // VERSION_4.0_MAX</div>
+                <h1 style="margin: 0; font-size: 28px; font-weight: 900; letter-spacing: -1px; filter: url(#vcp-glitch-filter);">极限渲染协议开启</h1>
+            </div>
+            <div style="text-align: right;">
+                <div style="color: var(--accent); font-size: 12px; font-weight: bold;">[ CPU: OVERLOAD ]</div>
+                <div style="color: #fff; font-size: 12px;">RENDERING_ENGINE: WEBKIT_VCP</div>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <!-- 左侧：3D 核心可视化 -->
+            <div style="height: 250px; border: 1px solid rgba(0, 242, 255, 0.5); position: relative; overflow: hidden; background: rgba(0,0,0,0.5);">
+                <div style="position: absolute; top: 50%; left: 50%; width: 100px; height: 100px; margin: -50px 0 0 -50px;

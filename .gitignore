@@ -1,0 +1,22 @@
+# Android / Gradle
+**/build/
+**/.gradle/
+android-app/local.properties
+
+# IDE
+.idea/
+*.iml
+
+# OS / temp
+.DS_Store
+Thumbs.db
+*.log
+
+# Local env
+.env
+.env.*
+
+# Keystores / signing
+*.jks
+*.keystore
+keystore.properties
