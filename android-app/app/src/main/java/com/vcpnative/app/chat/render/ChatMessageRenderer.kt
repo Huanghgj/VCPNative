@@ -22,6 +22,7 @@ import android.text.style.SuperscriptSpan
 import android.text.style.TypefaceSpan
 import android.text.style.UnderlineSpan
 import android.util.LruCache
+import android.util.Log
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
@@ -336,9 +337,17 @@ private object VcpChatMessageParser {
             mode = mode,
             role = role,
         )
-        return ChatRenderDocument(
+        val document = ChatRenderDocument(
             blocks = parseBlocks(normalized),
         )
+        if (shouldTraceImageDebugContent(rawContent) || shouldTraceImageDebugContent(normalized)) {
+            logImageDebug(
+                "parse contentKey=${imageDebugKey(normalized)} role=$role mode=$mode blocks=${
+                    document.blocks.joinToString(prefix = "[", postfix = "]") { it.javaClass.simpleName }
+                }",
+            )
+        }
+        return document
     }
 
     private fun preprocess(
@@ -864,6 +873,7 @@ private object VcpChatMessageParser {
 
     private fun parseRemoteImage(text: String): ChatRenderBlock.RemoteImage? {
         markdownImageRegex.matchEntire(text)?.let { match ->
+            logImageDebug("parseRemoteImage source=markdown url=${match.groupValues[2].trim()}")
             return ChatRenderBlock.RemoteImage(
                 url = match.groupValues[2].trim(),
                 alt = match.groupValues[1].trim().ifBlank { null },
@@ -874,6 +884,7 @@ private object VcpChatMessageParser {
             val attributes = match.groupValues[1]
             val src = extractHtmlAttribute(attributes, "src")?.trim().orEmpty()
             if (src.isNotBlank()) {
+                logImageDebug("parseRemoteImage source=html url=$src")
                 return ChatRenderBlock.RemoteImage(
                     url = src,
                     alt = extractHtmlAttribute(attributes, "alt")?.trim()?.ifBlank { null },
@@ -882,6 +893,7 @@ private object VcpChatMessageParser {
         }
 
         if (directImageUrlRegex.matches(text)) {
+            logImageDebug("parseRemoteImage source=direct url=$text")
             return ChatRenderBlock.RemoteImage(
                 url = text,
                 alt = null,
@@ -2039,6 +2051,12 @@ private data class BrowserHtmlRenderState(
     val wasTruncated: Boolean,
 )
 
+private data class BrowserHtmlImagePreviewRequest(
+    val displayUrl: String,
+    val originalUrl: String?,
+    val alt: String?,
+)
+
 private val chatRenderDocumentCache =
     object : LruCache<ChatRenderDocumentCacheKey, ChatRenderDocument>(CHAT_RENDER_DOCUMENT_CACHE_MAX_CHARS) {
         override fun sizeOf(
@@ -2169,10 +2187,35 @@ private fun BrowserHtmlBlockView(
     }
     val estimatedHeightPx = with(density) { estimateBrowserHtmlHeightDp(html).roundToPx() }
     var contentHeightPx by rememberSaveable(html) { mutableIntStateOf(estimatedHeightPx) }
+    var hasConfirmedHeight by rememberSaveable(html) { mutableStateOf(false) }
     var loadedHtml by rememberSaveable(html) { mutableStateOf<String?>(null) }
     val minHeightPx = with(density) { 48.dp.roundToPx() }
     val wrappedHtml = remember(renderState.html) {
-        buildBrowserHtmlDocument(renderState.html)
+        buildBrowserHtmlDocument(
+            rawHtml = renderState.html,
+        )
+    }
+    val applyMeasuredHeight = { candidateHeightPx: Int ->
+        val resolvedHeightPx = normalizeBrowserHtmlMeasuredHeightPx(
+            reportedHeightPx = candidateHeightPx,
+            estimatedHeightPx = estimatedHeightPx,
+            minHeightPx = minHeightPx,
+            htmlLength = renderState.html.length,
+            hasConfirmedHeight = hasConfirmedHeight,
+        )
+        if (!hasConfirmedHeight &&
+            !isSuspiciouslySmallBrowserHtmlHeightPx(
+                reportedHeightPx = resolvedHeightPx,
+                estimatedHeightPx = estimatedHeightPx,
+                minHeightPx = minHeightPx,
+                htmlLength = renderState.html.length,
+            )
+        ) {
+            hasConfirmedHeight = true
+        }
+        if (abs(resolvedHeightPx - contentHeightPx) >= 2) {
+            contentHeightPx = resolvedHeightPx
+        }
     }
 
     // 懒加载：一旦首次进入 compose（即滑入可见区域），立即激活，
@@ -2191,6 +2234,10 @@ private fun BrowserHtmlBlockView(
 
     val documentHtml = loadedHtml ?: wrappedHtml
     val placeholderHeight = with(density) { contentHeightPx.coerceAtLeast(minHeightPx).toDp() }
+    val shouldPauseWebView = shouldPauseBrowserHtmlWebView(
+        pauseDynamicContent = pauseDynamicContent,
+        hasConfirmedHeight = hasConfirmedHeight,
+    )
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -2246,9 +2293,7 @@ private fun BrowserHtmlBlockView(
                                 cssHeight = cssHeight,
                                 density = density.density,
                             )
-                            if (abs(heightPx - contentHeightPx) >= 2) {
-                                contentHeightPx = heightPx.coerceAtLeast(minHeightPx)
-                            }
+                            applyMeasuredHeight(heightPx)
                         },
                         BROWSER_HTML_BRIDGE_NAME,
                     )
@@ -2301,17 +2346,15 @@ private fun BrowserHtmlBlockView(
                                 webView = view,
                                 density = density.density,
                                 minHeightPx = minHeightPx,
-                                onHeightChanged = { heightPx ->
-                                    // Accept both growth and shrinkage from
-                                    // onPageFinished — earlier commits only
-                                    // allowed growth, but that left stale
-                                    // oversized heights when content changed.
-                                    if (abs(heightPx - contentHeightPx) >= 2) {
-                                        contentHeightPx = heightPx
-                                    }
-                                },
+                                onHeightChanged = applyMeasuredHeight,
                             )
                             view.evaluateJavascript(BROWSER_HTML_HEIGHT_JS, null)
+                            scheduleBrowserHtmlHeightRecovery(
+                                webView = view,
+                                density = density.density,
+                                minHeightPx = minHeightPx,
+                                onHeightChanged = applyMeasuredHeight,
+                            )
                         }
                     }
                 }
@@ -2342,7 +2385,7 @@ private fun BrowserHtmlBlockView(
                         null,
                     )
                 }
-                applyBrowserHtmlPausedState(webView, pauseDynamicContent)
+                applyBrowserHtmlPausedState(webView, shouldPauseWebView)
             },
             onReset = { webView ->
                 webView.stopLoading()
@@ -2382,6 +2425,31 @@ private fun updateBrowserHtmlContentHeight(
     }
 }
 
+private fun scheduleBrowserHtmlHeightRecovery(
+    webView: WebView,
+    density: Float,
+    minHeightPx: Int,
+    onHeightChanged: (Int) -> Unit,
+) {
+    BROWSER_HTML_RECOVERY_DELAYS_MS.forEach { delayMs ->
+        webView.postDelayed(
+            {
+                if (!webView.isAttachedToWindow) {
+                    return@postDelayed
+                }
+                updateBrowserHtmlContentHeight(
+                    webView = webView,
+                    density = density,
+                    minHeightPx = minHeightPx,
+                    onHeightChanged = onHeightChanged,
+                )
+                webView.evaluateJavascript(BROWSER_HTML_HEIGHT_JS, null)
+            },
+            delayMs,
+        )
+    }
+}
+
 private fun scaledBrowserHtmlHeightToPx(
     cssHeight: Float,
     density: Float,
@@ -2394,6 +2462,50 @@ private fun scaledBrowserHtmlHeightToPx(
     // Multiply by screen density to convert to physical pixels,
     // which is what Compose's `.height(px.toDp())` expects.
     return (cssHeight * density).roundToInt()
+}
+
+private fun normalizeBrowserHtmlMeasuredHeightPx(
+    reportedHeightPx: Int,
+    estimatedHeightPx: Int,
+    minHeightPx: Int,
+    htmlLength: Int,
+    hasConfirmedHeight: Boolean,
+): Int {
+    val clampedHeightPx = reportedHeightPx.coerceAtLeast(minHeightPx)
+    return if (!hasConfirmedHeight &&
+        isSuspiciouslySmallBrowserHtmlHeightPx(
+            reportedHeightPx = clampedHeightPx,
+            estimatedHeightPx = estimatedHeightPx,
+            minHeightPx = minHeightPx,
+            htmlLength = htmlLength,
+        )
+    ) {
+        estimatedHeightPx.coerceAtLeast(minHeightPx)
+    } else {
+        clampedHeightPx
+    }
+}
+
+private fun shouldPauseBrowserHtmlWebView(
+    pauseDynamicContent: Boolean,
+    hasConfirmedHeight: Boolean,
+): Boolean = pauseDynamicContent && hasConfirmedHeight
+
+private fun isSuspiciouslySmallBrowserHtmlHeightPx(
+    reportedHeightPx: Int,
+    estimatedHeightPx: Int,
+    minHeightPx: Int,
+    htmlLength: Int,
+): Boolean {
+    if (htmlLength < BROWSER_HTML_MIN_LENGTH_FOR_HEIGHT_GUARD) {
+        return false
+    }
+
+    val guardedFloorPx = maxOf(
+        minHeightPx * 2,
+        estimatedHeightPx / 3,
+    )
+    return reportedHeightPx < guardedFloorPx
 }
 
 private fun applyBrowserHtmlPausedState(
@@ -3013,17 +3125,18 @@ private fun NativeHtmlInlineTextBlock(
 }
 
 private fun parseNativeHtmlDocument(rawHtml: String): NativeHtmlDocumentModel {
+    val normalizedHtml = repairHtmlForRender(rawHtml)
     val root = MutableNativeHtmlElement(tagName = "root", attributes = emptyMap())
     val stack = ArrayDeque<MutableNativeHtmlElement>()
     stack.addLast(root)
     val tokenRegex = Regex("""(?is)<!--.*?-->|<!DOCTYPE[^>]*>|</?[a-zA-Z][\w:-]*(?:\s+[^<>]*?)?/?>""")
     var cursor = 0
 
-    tokenRegex.findAll(rawHtml).forEach { match ->
+    tokenRegex.findAll(normalizedHtml).forEach { match ->
         if (match.range.first > cursor) {
             stack.lastOrNull()?.children?.add(
                 NativeHtmlNode.Text(
-                    rawHtml.substring(cursor, match.range.first),
+                    normalizedHtml.substring(cursor, match.range.first),
                 ),
             )
         }
@@ -3069,9 +3182,9 @@ private fun parseNativeHtmlDocument(rawHtml: String): NativeHtmlDocumentModel {
         cursor = match.range.last + 1
     }
 
-    if (cursor < rawHtml.length) {
+    if (cursor < normalizedHtml.length) {
         stack.lastOrNull()?.children?.add(
-            NativeHtmlNode.Text(rawHtml.substring(cursor)),
+            NativeHtmlNode.Text(normalizedHtml.substring(cursor)),
         )
     }
 
@@ -3985,6 +4098,7 @@ private fun NativeMarkdownBlockView(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val actionMessageState = rememberUpdatedState(onActionMessage)
     val longPressState = rememberUpdatedState(onLongPress)
     val bodyStyle = MaterialTheme.typography.bodyLarge
@@ -4010,8 +4124,18 @@ private fun NativeMarkdownBlockView(
         markwon.toMarkdown(normalizedText)
     }
 
+    // 显式跟踪 TextView 的实际渲染高度，确保 Compose 能感知 AndroidView
+    // 内部 View 的高度变化，解决 LazyColumn 中从流式切换到最终渲染时
+    // 高度不更新导致内容只显示一部分的问题。
+    var measuredHeightPx by remember(text) { mutableIntStateOf(0) }
+    val heightModifier = if (measuredHeightPx > 0) {
+        Modifier.heightIn(min = with(density) { measuredHeightPx.toDp() })
+    } else {
+        Modifier
+    }
+
     AndroidView(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().then(heightModifier),
         factory = { viewContext ->
             TextView(viewContext).apply {
                 setPadding(0, 0, 0, 0)
@@ -4024,6 +4148,12 @@ private fun NativeMarkdownBlockView(
                 setOnLongClickListener {
                     longPressState.value?.invoke()
                     longPressState.value != null
+                }
+                viewTreeObserver.addOnGlobalLayoutListener {
+                    val h = measuredHeight
+                    if (h > 0 && abs(h - measuredHeightPx) >= 2) {
+                        measuredHeightPx = h
+                    }
                 }
             }
         },
@@ -4211,9 +4341,111 @@ private fun isProbablyTruncatedBrowserHtml(rawHtml: String): Boolean {
     return lastTagStart > lastTagEnd
 }
 
-private fun repairBrowserHtmlForRender(rawHtml: String): String {
-    val trimmed = trimDanglingTrailingHtmlFragment(rawHtml)
+private fun repairHtmlForRender(rawHtml: String): String {
+    val normalized = repairIsolatedClosingTagFragments(rawHtml)
+    val trimmed = trimDanglingTrailingHtmlFragment(normalized)
     return appendMissingClosingTags(trimmed)
+}
+
+private fun repairBrowserHtmlForRender(rawHtml: String): String {
+    return repairHtmlForRender(rawHtml)
+}
+
+private fun repairIsolatedClosingTagFragments(rawHtml: String): String {
+    if (rawHtml.isBlank() || '/' !in rawHtml) {
+        return rawHtml
+    }
+
+    val tokenRegex = Regex("""(?is)<!--[\s\S]*?-->|<!DOCTYPE[^>]*>|</?([a-zA-Z][\w:-]*)\b[^>]*?>""")
+    val openTags = ArrayDeque<String>()
+    var cursor = 0
+    var changed = false
+
+    val repaired = buildString(rawHtml.length + 16) {
+        tokenRegex.findAll(rawHtml).forEach { match ->
+            if (match.range.first > cursor) {
+                val textSegment = rawHtml.substring(cursor, match.range.first)
+                val repairedSegment = repairIsolatedClosingTagLines(textSegment, openTags)
+                if (repairedSegment != textSegment) {
+                    changed = true
+                }
+                append(repairedSegment)
+            }
+
+            val token = match.value
+            append(token)
+
+            val tagName = match.groups[1]?.value?.lowercase()
+            if (tagName != null) {
+                when {
+                    token.startsWith("</") -> removeLastMatchingTag(openTags, tagName)
+                    token.endsWith("/>") ||
+                        tagName in BROWSER_HTML_VOID_TAGS ||
+                        tagName in NATIVE_HTML_VOID_TAGS -> Unit
+                    else -> openTags.addLast(tagName)
+                }
+            }
+
+            cursor = match.range.last + 1
+        }
+
+        if (cursor < rawHtml.length) {
+            val textSegment = rawHtml.substring(cursor)
+            val repairedSegment = repairIsolatedClosingTagLines(textSegment, openTags)
+            if (repairedSegment != textSegment) {
+                changed = true
+            }
+            append(repairedSegment)
+        }
+    }
+
+    return if (changed) repaired else rawHtml
+}
+
+private fun repairIsolatedClosingTagLines(
+    textSegment: String,
+    openTags: ArrayDeque<String>,
+): String {
+    if (textSegment.isBlank() || '/' !in textSegment) {
+        return textSegment
+    }
+
+    val orphanClosingTagRegex = Regex("""^(\s*)/([a-zA-Z][\w:-]*)>(\s*)$""")
+    var cursor = 0
+    var changed = false
+
+    val repaired = buildString(textSegment.length + 8) {
+        while (cursor < textSegment.length) {
+            val lineEnd = textSegment.indexOf('\n', startIndex = cursor).let { index ->
+                if (index == -1) textSegment.length else index
+            }
+            val line = textSegment.substring(cursor, lineEnd)
+            val repairedLine = orphanClosingTagRegex.matchEntire(line)?.let { match ->
+                val tagName = match.groupValues[2].lowercase()
+                if (tagName in openTags) {
+                    removeLastMatchingTag(openTags, tagName)
+                    changed = true
+                    buildString(line.length + 1) {
+                        append(match.groupValues[1])
+                        append("</")
+                        append(match.groupValues[2])
+                        append('>')
+                        append(match.groupValues[3])
+                    }
+                } else {
+                    line
+                }
+            } ?: line
+
+            append(repairedLine)
+            if (lineEnd < textSegment.length) {
+                append('\n')
+            }
+            cursor = lineEnd + 1
+        }
+    }
+
+    return if (changed) repaired else textSegment
 }
 
 private fun trimDanglingTrailingHtmlFragment(rawHtml: String): String {
@@ -4302,13 +4534,17 @@ private fun estimateBrowserHtmlHeightDp(html: String): androidx.compose.ui.unit.
     }
 }
 
-private fun buildBrowserHtmlDocument(rawHtml: String): String {
+private fun buildBrowserHtmlDocument(
+    rawHtml: String,
+    enableImagePreview: Boolean = false,
+): String {
     val headContent = extractHtmlHeadContent(rawHtml)
     val bodyContent = if (Regex("""(?is)<body\b""").containsMatchIn(rawHtml)) {
         extractHtmlBodyContent(rawHtml)
     } else {
         rawHtml
     }
+    val imagePreviewEnabledLiteral = if (enableImagePreview) "true" else "false"
 
     return """
         <!DOCTYPE html>
@@ -4348,14 +4584,78 @@ private fun buildBrowserHtmlDocument(rawHtml: String): String {
             </style>
             <script>
                 (function() {
+                    var imagePreviewEnabled = $imagePreviewEnabledLiteral;
+
                     window.input = function(text) {
                         try {
                             location.href = '${VCP_NATIVE_ACTION_SCHEME}://action?${VCP_NATIVE_ACTION_QUERY}=' + encodeURIComponent(text || '');
                         } catch (error) {}
                     };
 
+                    function openImagePreview(img) {
+                        if (!imagePreviewEnabled || !img) {
+                            return;
+                        }
+                        try {
+                            var displayUrl = img.currentSrc || img.getAttribute('src') || '';
+                            if (!displayUrl) {
+                                return;
+                            }
+                            var originalUrl = img.getAttribute('data-vcp-original-src') || displayUrl;
+                            var alt = img.getAttribute('alt') || '';
+                            location.href = '${BROWSER_HTML_IMAGE_PREVIEW_SCHEME}://open?${BROWSER_HTML_IMAGE_PREVIEW_URL_QUERY}='
+                                + encodeURIComponent(displayUrl)
+                                + '&${BROWSER_HTML_IMAGE_PREVIEW_ORIGINAL_URL_QUERY}='
+                                + encodeURIComponent(originalUrl)
+                                + '&${BROWSER_HTML_IMAGE_PREVIEW_ALT_QUERY}='
+                                + encodeURIComponent(alt);
+                        } catch (error) {}
+                    }
+
                     var lastPostedHeight = 0;
                     var heightScheduled = false;
+
+                    function measureDeepestContentBottom() {
+                        try {
+                            var body = document.body;
+                            var root = document.documentElement;
+                            var baseTop = 0;
+                            if (body && body.getBoundingClientRect) {
+                                baseTop = body.getBoundingClientRect().top;
+                            } else if (root && root.getBoundingClientRect) {
+                                baseTop = root.getBoundingClientRect().top;
+                            }
+
+                            var maxBottom = 0;
+                            var allNodes = body && body.querySelectorAll ? body.querySelectorAll('*') : [];
+                            for (var index = 0; index < allNodes.length; index += 1) {
+                                var node = allNodes[index];
+                                if (!node || !node.getBoundingClientRect) {
+                                    continue;
+                                }
+                                var rect = node.getBoundingClientRect();
+                                if (!rect) {
+                                    continue;
+                                }
+                                var bottom = rect.bottom - baseTop;
+                                if (isFinite(bottom) && bottom > maxBottom) {
+                                    maxBottom = bottom;
+                                }
+                            }
+
+                            if (body && body.getBoundingClientRect) {
+                                var bodyRect = body.getBoundingClientRect();
+                                var bodyBottom = bodyRect.bottom - baseTop;
+                                if (isFinite(bodyBottom) && bodyBottom > maxBottom) {
+                                    maxBottom = bodyBottom;
+                                }
+                            }
+
+                            return Math.ceil(maxBottom);
+                        } catch (error) {
+                            return 0;
+                        }
+                    }
 
                     function readHeight() {
                         var root = document.documentElement;
@@ -4363,8 +4663,11 @@ private fun buildBrowserHtmlDocument(rawHtml: String): String {
                         return Math.ceil(Math.max(
                             body ? body.scrollHeight : 0,
                             body ? body.offsetHeight : 0,
+                            body ? body.clientHeight : 0,
                             root ? root.scrollHeight : 0,
-                            root ? root.offsetHeight : 0
+                            root ? root.offsetHeight : 0,
+                            root ? root.clientHeight : 0,
+                            measureDeepestContentBottom()
                         ));
                     }
 
@@ -4426,6 +4729,22 @@ private fun buildBrowserHtmlDocument(rawHtml: String): String {
                     });
                     window.addEventListener('resize', schedulePostHeight);
                     document.addEventListener('DOMContentLoaded', function() {
+                        if (imagePreviewEnabled) {
+                            document.addEventListener('click', function(event) {
+                                try {
+                                    var node = event.target;
+                                    while (node && node !== document.body && node !== document.documentElement) {
+                                        if (node.tagName && node.tagName.toLowerCase() === 'img') {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            openImagePreview(node);
+                                            return false;
+                                        }
+                                        node = node.parentElement;
+                                    }
+                                } catch (error) {}
+                            }, true);
+                        }
                         try {
                             var observerTarget = document.documentElement || document.body;
                             if (window.ResizeObserver && observerTarget) {
@@ -4469,12 +4788,39 @@ private fun handleBrowserHtmlNavigation(
     context: android.content.Context,
     link: String?,
     onActionMessage: ((String) -> Unit)?,
+    onNavigationOverride: ((String) -> Boolean)? = null,
+    onImagePreviewRequest: ((BrowserHtmlImagePreviewRequest) -> Unit)? = null,
 ): Boolean {
     if (link.isNullOrBlank()) {
         return false
     }
 
+    if (onNavigationOverride?.invoke(link) == true) {
+        logImageDebug("handleBrowserHtmlNavigation override link=$link")
+        return true
+    }
+
     val uri = runCatching { Uri.parse(link) }.getOrNull() ?: return false
+    if (uri.scheme == BROWSER_HTML_IMAGE_PREVIEW_SCHEME) {
+        val displayUrl = uri.getQueryParameter(BROWSER_HTML_IMAGE_PREVIEW_URL_QUERY)
+            ?.trim()
+            .orEmpty()
+        if (displayUrl.isNotBlank()) {
+            onImagePreviewRequest?.invoke(
+                BrowserHtmlImagePreviewRequest(
+                    displayUrl = displayUrl,
+                    originalUrl = uri.getQueryParameter(BROWSER_HTML_IMAGE_PREVIEW_ORIGINAL_URL_QUERY)
+                        ?.trim()
+                        ?.ifBlank { null },
+                    alt = uri.getQueryParameter(BROWSER_HTML_IMAGE_PREVIEW_ALT_QUERY)
+                        ?.trim()
+                        ?.ifBlank { null },
+                ),
+            )
+            logImageDebug("handleBrowserHtmlNavigation imagePreview displayUrl=$displayUrl")
+            return true
+        }
+    }
     if (uri.scheme == VCP_NATIVE_ACTION_SCHEME) {
         val actionText = uri.getQueryParameter(VCP_NATIVE_ACTION_QUERY)
             ?.trim()
@@ -4482,6 +4828,7 @@ private fun handleBrowserHtmlNavigation(
         if (actionText.isNotBlank()) {
             onActionMessage?.invoke(buildActionMessagePayload(actionText))
         }
+        logImageDebug("handleBrowserHtmlNavigation action link=$link")
         return true
     }
 
@@ -4491,6 +4838,7 @@ private fun handleBrowserHtmlNavigation(
                 Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
+        logImageDebug("handleBrowserHtmlNavigation external link=$link")
         return true
     }
 
@@ -4498,6 +4846,11 @@ private fun handleBrowserHtmlNavigation(
 }
 
 private const val BROWSER_HTML_BASE_URL = "http://vcpnative.invalid/"
+private const val BROWSER_HTML_IMAGE_PREVIEW_SCHEME = "vcpnative-image-preview"
+private const val BROWSER_HTML_IMAGE_PREVIEW_URL_QUERY = "url"
+private const val BROWSER_HTML_IMAGE_PREVIEW_ORIGINAL_URL_QUERY = "original"
+private const val BROWSER_HTML_IMAGE_PREVIEW_ALT_QUERY = "alt"
+private const val IMAGE_DEBUG_TAG = "VCPImageDebug"
 private val BROWSER_HTML_ADVANCED_TAGS_REGEX = Regex("""(?is)<(style|svg|filter|pattern|mask|canvas|iframe|video|audio)\b""")
 private val BROWSER_HTML_EVENT_HANDLER_REGEX = Regex("""(?is)\bon(?:click|mouseover|mouseout|mouseenter|mouseleave|load|error)\s*=""")
 private val BROWSER_HTML_CSS_FEATURES_REGEX = Regex("""(?is)(@keyframes|animation\s*:|backdrop-filter\s*:|filter\s*:|perspective\s*:|grid-template-columns\s*:|grid-template-rows\s*:|display\s*:\s*grid|display\s*:\s*flex|position\s*:\s*fixed|position\s*:\s*sticky|transform\s*:|clip-path\s*:|radial-gradient\s*\(|linear-gradient\s*\()""")
@@ -4512,9 +4865,42 @@ private const val BROWSER_HTML_PAUSE_JS =
 private const val BROWSER_HTML_RESUME_JS =
     "(function(){if(window.__vcpSetPaused){window.__vcpSetPaused(false);}return true;})();"
 private const val BROWSER_HTML_UPDATE_DEBOUNCE_MS = 180L
+private const val IMAGE_PREVIEW_LAUNCH_DEBOUNCE_MS = 700L
+private val BROWSER_HTML_RECOVERY_DELAYS_MS = longArrayOf(80L, 240L, 600L)
+private const val BROWSER_HTML_MIN_LENGTH_FOR_HEIGHT_GUARD = 700
 private const val BROWSER_HTML_PAUSE_TAG_KEY = 0x7F0B0211
 private const val CHAT_RENDER_DOCUMENT_CACHE_MAX_CHARS = 1_500_000
 private const val NATIVE_HTML_DOCUMENT_CACHE_MAX_CHARS = 1_000_000
+private val imagePreviewLaunchLock = Any()
+
+@Volatile
+private var lastImagePreviewLaunchKey = ""
+
+@Volatile
+private var lastImagePreviewLaunchAtElapsedMs = 0L
+
+private fun shouldTraceImageDebugContent(content: String): Boolean {
+    val trimmed = content.trim()
+    if (trimmed.isBlank()) {
+        return false
+    }
+    return "<img" in trimmed.lowercase() ||
+        IMAGE_DEBUG_MARKDOWN_REGEX.containsMatchIn(trimmed) ||
+        IMAGE_DEBUG_DIRECT_URL_REGEX.containsMatchIn(trimmed)
+}
+
+private fun imageDebugKey(content: String): String =
+    content.hashCode().toUInt().toString(16)
+
+private fun logImageDebug(message: String) {
+    runCatching {
+        Log.d(IMAGE_DEBUG_TAG, message)
+    }
+}
+
+private val IMAGE_DEBUG_MARKDOWN_REGEX = Regex("""!\[[^\]]*]\([^)]+\)""")
+private val IMAGE_DEBUG_DIRECT_URL_REGEX =
+    Regex("""https?://[^\s]+\.(?:jpeg|jpg|png|gif|webp)(?:\?[^\s]*)?""", RegexOption.IGNORE_CASE)
 private val BROWSER_HTML_VOID_TAGS = setOf(
     "area",
     "base",

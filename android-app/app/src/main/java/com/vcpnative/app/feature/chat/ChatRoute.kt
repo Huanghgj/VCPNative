@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.speech.tts.TextToSpeech
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -85,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -154,6 +156,8 @@ class ChatViewModel(
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
     private val _pendingAttachments = MutableStateFlow<List<ChatAttachment>>(emptyList())
     val pendingAttachments: StateFlow<List<ChatAttachment>> = _pendingAttachments.asStateFlow()
+    private val _runtimeNotice = MutableStateFlow<String?>(null)
+    val runtimeNotice: StateFlow<String?> = _runtimeNotice.asStateFlow()
     private var activeRequestId: String? = null
 
     private data class PendingUserMessage(
@@ -197,6 +201,10 @@ class ChatViewModel(
 
     fun removePendingAttachment(attachmentId: String) {
         _pendingAttachments.value = _pendingAttachments.value.filterNot { it.id == attachmentId }
+    }
+
+    fun consumeRuntimeNotice() {
+        _runtimeNotice.value = null
     }
 
     fun sendMessage(draft: String) {
@@ -437,15 +445,25 @@ class ChatViewModel(
             assistantDraftId = prepared.compiledRequest.requestId
             submitPreparedRequest(prepared)
         } catch (error: Throwable) {
-            assistantDraftId?.let { draftId ->
-                workspaceRepository.deleteMessage(topicId, draftId)
+            runCatching {
+                assistantDraftId?.let { draftId ->
+                    workspaceRepository.deleteMessage(topicId, draftId)
+                }
+            }.onFailure { cleanupError ->
+                Log.e(TAG, "Failed to clean up assistant draft for topic=$topicId", cleanupError)
             }
-            workspaceRepository.addMessage(
-                topicId = topicId,
-                role = "system",
-                content = error.message ?: failureMessage,
-                status = "error",
-            )
+            val failureText = error.message ?: failureMessage
+            runCatching {
+                workspaceRepository.addMessage(
+                    topicId = topicId,
+                    role = "system",
+                    content = failureText,
+                    status = "error",
+                )
+            }.onFailure { persistError ->
+                Log.e(TAG, "Failed to persist request failure message for topic=$topicId", persistError)
+                _runtimeNotice.value = failureText
+            }
         } finally {
             activeRequestId = null
             _isSending.value = false
@@ -606,6 +624,7 @@ class ChatViewModel(
 
     companion object {
         private const val ASSISTANT_STREAM_PERSIST_INTERVAL_MS = 240L
+        private const val TAG = "ChatViewModel"
 
         private fun buildBranchTitle(currentTitle: String): String =
             if (currentTitle.endsWith(" (分支)")) {
@@ -650,6 +669,7 @@ fun ChatRoute(
     onOpenSettings: () -> Unit,
     onOpenAttachment: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     val viewModel: ChatViewModel = viewModel(
         factory = ChatViewModel.factory(
             appContainer = appContainer,
@@ -661,6 +681,7 @@ fun ChatRoute(
     val messageAttachments by viewModel.messageAttachments.collectAsStateWithLifecycle()
     val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
+    val runtimeNotice by viewModel.runtimeNotice.collectAsStateWithLifecycle()
     val topicTitle by produceState<String?>(initialValue = null, key1 = topicId) {
         val topic = appContainer.workspaceRepository.findTopic(topicId)
         value = topic?.title ?: topic?.sourceTopicId
@@ -678,7 +699,15 @@ fun ChatRoute(
         viewModel.importAttachments(uris)
     }
 
+    runtimeNotice?.let { message ->
+        LaunchedEffect(message) {
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            viewModel.consumeRuntimeNotice()
+        }
+    }
+
     ChatScreen(
+        composerSessionKey = topicId,
         title = topicTitle ?: topicId,
         subtitle = agentName ?: agentId,
         messages = messages,
@@ -715,6 +744,7 @@ fun ChatRoute(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatScreen(
+    composerSessionKey: String,
     title: String,
     subtitle: String,
     messages: List<MessageEntity>,
@@ -737,12 +767,12 @@ private fun ChatScreen(
     onRemovePendingAttachment: (String) -> Unit,
     onOpenAttachment: (String) -> Unit,
 ) {
-    var draft by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val bubbleSpeechController = rememberBubbleSpeechController()
     val density = LocalDensity.current
     val autoFollowThresholdPx = remember(density) { with(density) { 96.dp.roundToPx() } }
     var autoFollowBottom by rememberSaveable { mutableStateOf(true) }
+    var composerFocused by remember { mutableStateOf(false) }
     ChatPerformanceMetricsState(isSending = isSending)
     val latestCompletedAssistantMessageId = remember(messages) {
         messages.lastOrNull { it.role == "assistant" && it.status !in setOf("draft", "streaming") }?.id
@@ -795,8 +825,9 @@ private fun ChatScreen(
         messages.lastOrNull()?.content,
         messages.lastOrNull()?.status,
         autoFollowBottom,
+        composerFocused,
     ) {
-        if (messages.isEmpty() || !autoFollowBottom) {
+        if (messages.isEmpty() || !autoFollowBottom || composerFocused) {
             return@LaunchedEffect
         }
 
@@ -809,8 +840,8 @@ private fun ChatScreen(
         }
     }
 
-    LaunchedEffect(listState, autoFollowBottom, messages.lastOrNull()?.id) {
-        if (messages.isEmpty() || !autoFollowBottom) {
+    LaunchedEffect(listState, autoFollowBottom, messages.lastOrNull()?.id, composerFocused) {
+        if (messages.isEmpty() || !autoFollowBottom || composerFocused) {
             return@LaunchedEffect
         }
 
@@ -909,102 +940,16 @@ private fun ChatScreen(
             }
         },
         bottomBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .imePadding()
-                    .navigationBarsPadding()
-                    .background(MaterialTheme.colorScheme.surface),
-            ) {
-                HorizontalDivider(color = DividerDefaults.color)
-                if (isSending) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                if (pendingAttachments.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        pendingAttachments.forEach { attachment ->
-                            PendingAttachmentRow(
-                                attachment = attachment,
-                                enabled = !isSending,
-                                onRemove = { onRemovePendingAttachment(attachment.id) },
-                            )
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    IconButton(
-                        onClick = onPickAttachments,
-                        enabled = !isSending,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.AttachFile,
-                            contentDescription = "添加附件",
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text(text = "说点什么吧～") },
-                        enabled = !isSending,
-                        maxLines = 5,
-                        shape = RoundedCornerShape(24.dp),
-                    )
-                    if (isSending) {
-                        FloatingActionButton(
-                            onClick = onInterrupt,
-                            modifier = Modifier.size(48.dp),
-                            containerColor = MaterialTheme.colorScheme.error,
-                            contentColor = MaterialTheme.colorScheme.onError,
-                            shape = CircleShape,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Stop,
-                                contentDescription = "中止回复",
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
-                    } else {
-                        FloatingActionButton(
-                            onClick = {
-                                val snapshot = draft
-                                draft = ""
-                                onSendMessage(snapshot)
-                            },
-                            modifier = Modifier.size(48.dp),
-                            containerColor = if (draft.isNotBlank() || pendingAttachments.isNotEmpty()) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                            contentColor = if (draft.isNotBlank() || pendingAttachments.isNotEmpty()) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            shape = CircleShape,
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.Send,
-                                contentDescription = "发送",
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
-                    }
-                }
-            }
+            ChatComposerBar(
+                composerSessionKey = composerSessionKey,
+                pendingAttachments = pendingAttachments,
+                isSending = isSending,
+                onPickAttachments = onPickAttachments,
+                onRemovePendingAttachment = onRemovePendingAttachment,
+                onSendMessage = onSendMessage,
+                onInterrupt = onInterrupt,
+                onFocusChanged = { composerFocused = it },
+            )
         },
     ) { innerPadding ->
         if (messages.isEmpty()) {
@@ -1098,6 +1043,124 @@ private fun ChatPerformanceMetricsState(
         onDispose {
             stateHolder?.removeState("ChatStreaming")
             stateHolder?.removeState("Screen")
+        }
+    }
+}
+
+@Composable
+private fun ChatComposerBar(
+    composerSessionKey: String,
+    pendingAttachments: List<ChatAttachment>,
+    isSending: Boolean,
+    onPickAttachments: () -> Unit,
+    onRemovePendingAttachment: (String) -> Unit,
+    onSendMessage: (String) -> Unit,
+    onInterrupt: () -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
+) {
+    var draft by rememberSaveable(composerSessionKey) { mutableStateOf("") }
+    val sendEnabled = remember(draft, pendingAttachments) {
+        draft.isNotBlank() || pendingAttachments.isNotEmpty()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding()
+            .navigationBarsPadding()
+            .background(MaterialTheme.colorScheme.surface),
+    ) {
+        HorizontalDivider(color = DividerDefaults.color)
+        if (isSending) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        if (pendingAttachments.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                pendingAttachments.forEach { attachment ->
+                    PendingAttachmentRow(
+                        attachment = attachment,
+                        enabled = !isSending,
+                        onRemove = { onRemovePendingAttachment(attachment.id) },
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            IconButton(
+                onClick = onPickAttachments,
+                enabled = !isSending,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.AttachFile,
+                    contentDescription = "添加附件",
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { focusState ->
+                        onFocusChanged(focusState.isFocused)
+                    },
+                placeholder = { Text(text = "说点什么吧～") },
+                enabled = !isSending,
+                maxLines = 5,
+                shape = RoundedCornerShape(24.dp),
+            )
+            if (isSending) {
+                FloatingActionButton(
+                    onClick = onInterrupt,
+                    modifier = Modifier.size(48.dp),
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                    shape = CircleShape,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Stop,
+                        contentDescription = "中止回复",
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            } else {
+                FloatingActionButton(
+                    onClick = {
+                        val snapshot = draft
+                        draft = ""
+                        onSendMessage(snapshot)
+                    },
+                    modifier = Modifier.size(48.dp),
+                    containerColor = if (sendEnabled) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    contentColor = if (sendEnabled) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    shape = CircleShape,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.Send,
+                        contentDescription = "发送",
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -1279,7 +1342,7 @@ private fun MessageBubble(
                 if (showRoleLabel) {
                     Spacer(modifier = Modifier.height(6.dp))
                 }
-                key(message.id) {
+                key(message.id, message.status) {
                     ChatMessageContent(
                         content = displayContent,
                         mode = if (isStreamingMessage) {

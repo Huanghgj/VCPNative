@@ -38,7 +38,7 @@ class VcpChatMessageParserTest {
     }
 
     @Test
-    fun `html plus markdown paragraph stays in single native html block`() {
+    fun `html block stops before following markdown paragraph`() {
         val content = """
             <div><strong>hello</strong></div>
 
@@ -50,10 +50,12 @@ class VcpChatMessageParserTest {
         assertBlockTypes(
             blocks,
             "HtmlDocument",
+            "MarkdownDocument",
         )
-        val text = getStringProperty(blocks.single(), "getCode")
-        assertTrue(text.contains("<div><strong>hello</strong></div>"))
-        assertTrue(text.contains("这里应该回到普通段落"))
+        val htmlText = getStringProperty(blocks[0], "getCode")
+        val markdownText = getStringProperty(blocks[1], "getText")
+        assertTrue(htmlText.contains("<div><strong>hello</strong></div>"))
+        assertTrue(markdownText.contains("这里应该回到普通段落"))
     }
 
     @Test
@@ -199,10 +201,10 @@ class VcpChatMessageParserTest {
     }
 
     @Test
-    fun `absurdly large html still trips safe fallback`() {
+    fun `absurdly large plain html skips browser renderer and still trips safe fallback`() {
         val repeated = "<div style=\"padding: 8px;\">block</div>\n".repeat(2_500)
 
-        assertEquals(true, shouldUseBrowserHtmlRenderer(repeated))
+        assertEquals(false, shouldUseBrowserHtmlRenderer(repeated))
         assertEquals(true, shouldRenderMessageInSafeMode(repeated))
         assertEquals(true, shouldFallbackToSafeHtmlRenderer(repeated))
     }
@@ -221,6 +223,125 @@ class VcpChatMessageParserTest {
         assertEquals(false, repaired.contains("""<div style="position: absolute; top: 50%; left: 50%;"""))
         assertTrue(repaired.contains("""<div class="panel">ok</div>"""))
         assertTrue(repaired.endsWith("</div>"))
+    }
+
+    @Test
+    fun `isolated closing tag fragments are repaired before browser render`() {
+        val content = """
+            <div id="vcp-root">
+                <div style="margin:12px 0;text-align:center;">
+                    <span style="font-size:28px;">/span>
+                </div>
+            </div>
+        """.trimIndent()
+
+        val repaired = repairBrowserHtmlForRender(content)
+
+        assertTrue(repaired.contains("""<span style="font-size:28px;"></span>"""))
+        assertEquals(-1, repaired.indexOf("""<span style="font-size:28px;">/span>"""))
+    }
+
+    @Test
+    fun `inline literal slash text is not mistaken for closing tag`() {
+        val content = "<div><p>literal /span> text</p></div>"
+
+        val repaired = repairBrowserHtmlForRender(content)
+
+        assertTrue(repaired.contains("literal /span> text"))
+    }
+
+    @Test
+    fun `native html parser uses repaired html fragments`() {
+        val document = parseNativeHtmlDocument(
+            "<div><span style=\"font-size:28px;\">/span><p>ok</p></div>",
+        )
+
+        val nodes = getListProperty(document, "getNodes")
+        assertEquals(1, nodes.size)
+        assertEquals("div", getStringProperty(nodes.single(), "getTagName"))
+
+        val children = getListProperty(nodes.single(), "getChildren")
+        assertEquals(2, children.size)
+        assertEquals("span", getStringProperty(children[0], "getTagName"))
+        assertEquals("p", getStringProperty(children[1], "getTagName"))
+    }
+
+    @Test
+    fun `suspiciously small browser html height is guarded before first confirmed measurement`() {
+        val normalized = normalizeBrowserHtmlMeasuredHeightPx(
+            reportedHeightPx = 48,
+            estimatedHeightPx = 300,
+            minHeightPx = 48,
+            htmlLength = 1_400,
+            hasConfirmedHeight = false,
+        )
+
+        assertEquals(300, normalized)
+    }
+
+    @Test
+    fun `small browser html height is accepted after content has confirmed layout`() {
+        val normalized = normalizeBrowserHtmlMeasuredHeightPx(
+            reportedHeightPx = 72,
+            estimatedHeightPx = 300,
+            minHeightPx = 48,
+            htmlLength = 1_400,
+            hasConfirmedHeight = true,
+        )
+
+        assertEquals(72, normalized)
+    }
+
+    @Test
+    fun `short browser html is not blocked by height guard`() {
+        val normalized = normalizeBrowserHtmlMeasuredHeightPx(
+            reportedHeightPx = 48,
+            estimatedHeightPx = 80,
+            minHeightPx = 48,
+            htmlLength = 120,
+            hasConfirmedHeight = false,
+        )
+
+        assertEquals(48, normalized)
+    }
+
+    @Test
+    fun `browser html is not paused before first stable height confirmation`() {
+        assertEquals(
+            false,
+            shouldPauseBrowserHtmlWebView(
+                pauseDynamicContent = true,
+                hasConfirmedHeight = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `browser html pause resumes after first stable height confirmation`() {
+        assertEquals(
+            true,
+            shouldPauseBrowserHtmlWebView(
+                pauseDynamicContent = true,
+                hasConfirmedHeight = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `standalone html img tag is parsed as remote image block`() {
+        val content =
+            """<img src="http://185.200.64.127:6005/pw=huanglei@./images/comfyuigen/41f09722-c269-4d9c-868e-429b84c0591a.png" alt="solo, young girl, extremely petite, flat chest, child-like proportions, small fr..." width="300">"""
+
+        val blocks = parseBlocks(content)
+
+        assertBlockTypes(
+            blocks,
+            "RemoteImage",
+        )
+        assertEquals(
+            "http://185.200.64.127:6005/pw=huanglei@./images/comfyuigen/41f09722-c269-4d9c-868e-429b84c0591a.png",
+            getStringProperty(blocks.single(), "getUrl"),
+        )
     }
 
     private fun parseBlocks(content: String): List<Any> {
@@ -305,6 +426,51 @@ class VcpChatMessageParserTest {
         )
         method.isAccessible = true
         return method.invoke(null, content) as String
+    }
+
+    private fun normalizeBrowserHtmlMeasuredHeightPx(
+        reportedHeightPx: Int,
+        estimatedHeightPx: Int,
+        minHeightPx: Int,
+        htmlLength: Int,
+        hasConfirmedHeight: Boolean,
+    ): Int {
+        val rendererClass = Class.forName("com.vcpnative.app.chat.render.ChatMessageRendererKt")
+        val method = rendererClass.getDeclaredMethod(
+            "normalizeBrowserHtmlMeasuredHeightPx",
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+            Boolean::class.javaPrimitiveType,
+        )
+        method.isAccessible = true
+        return method.invoke(
+            null,
+            reportedHeightPx,
+            estimatedHeightPx,
+            minHeightPx,
+            htmlLength,
+            hasConfirmedHeight,
+        ) as Int
+    }
+
+    private fun shouldPauseBrowserHtmlWebView(
+        pauseDynamicContent: Boolean,
+        hasConfirmedHeight: Boolean,
+    ): Boolean {
+        val rendererClass = Class.forName("com.vcpnative.app.chat.render.ChatMessageRendererKt")
+        val method = rendererClass.getDeclaredMethod(
+            "shouldPauseBrowserHtmlWebView",
+            Boolean::class.javaPrimitiveType,
+            Boolean::class.javaPrimitiveType,
+        )
+        method.isAccessible = true
+        return method.invoke(
+            null,
+            pauseDynamicContent,
+            hasConfirmedHeight,
+        ) as Boolean
     }
 
     private fun assertBlockTypes(blocks: List<Any>, vararg expectedSimpleNames: String) {
