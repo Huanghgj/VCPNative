@@ -67,6 +67,8 @@ interface WorkspaceRepository {
 
     suspend fun saveAgent(agent: AgentEntity): AgentEntity
 
+    suspend fun deleteAgent(agentId: String)
+
     suspend fun findAgent(agentId: String): AgentEntity?
 
     suspend fun findTopic(topicId: String): TopicEntity?
@@ -228,6 +230,16 @@ class RoomWorkspaceRepository(
         return savedAgent
     }
 
+    override suspend fun deleteAgent(agentId: String) {
+        agentDao.deleteById(agentId)
+        withContext(Dispatchers.IO) {
+            val compatDir = fileStore.compatAgentDir(agentId)
+            if (compatDir.exists()) {
+                compatDir.deleteRecursively()
+            }
+        }
+    }
+
     override suspend fun findAgent(agentId: String): AgentEntity? = agentDao.findById(agentId)
 
     override suspend fun findTopic(topicId: String): TopicEntity? = topicDao.findById(topicId)
@@ -273,7 +285,13 @@ class RoomWorkspaceRepository(
                 ?.let(::indexTopicsById)
                 .orEmpty()
 
-            val configJson = (existingConfig ?: JSONObject()).apply {
+            val configJson = (existingConfig ?: JSONObject()).also { json ->
+                mergeJsonObject(
+                    target = json,
+                    source = readJsonObject(agent.extraJson),
+                    overwrite = false,
+                )
+            }.apply {
                 put("name", agent.name)
                 put("systemPrompt", agent.systemPrompt)
                 put("promptMode", agent.promptMode)
@@ -312,7 +330,13 @@ class RoomWorkspaceRepository(
                         topics.forEach { topic ->
                             val existingTopic = existingTopics[topic.sourceTopicId]
                             put(
-                                (existingTopic ?: JSONObject()).apply {
+                                (existingTopic ?: JSONObject()).also { topicJson ->
+                                    mergeJsonObject(
+                                        target = topicJson,
+                                        source = readJsonObject(topic.extraJson),
+                                        overwrite = false,
+                                    )
+                                }.apply {
                                     put("id", topic.sourceTopicId)
                                     put("name", topic.title)
                                     put("createdAt", topic.createdAt)
@@ -526,6 +550,24 @@ class RoomWorkspaceRepository(
                 null
             }
         }
+
+    private fun mergeJsonObject(
+        target: JSONObject,
+        source: JSONObject?,
+        overwrite: Boolean,
+    ) {
+        if (source == null) {
+            return
+        }
+
+        val iterator = source.keys()
+        while (iterator.hasNext()) {
+            val key = iterator.next()
+            if (overwrite || !target.has(key)) {
+                target.put(key, source.opt(key))
+            }
+        }
+    }
 
     private fun indexMessagesById(historyArray: JSONArray): Map<String, JSONObject> =
         buildMap {

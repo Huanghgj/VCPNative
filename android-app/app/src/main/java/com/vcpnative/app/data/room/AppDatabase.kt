@@ -38,6 +38,7 @@ data class AgentEntity(
     val avatarPath: String? = null,
     val sortOrder: Int = 0,
     val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "extra_json") val extraJson: String? = null,
 )
 
 @Entity(
@@ -59,6 +60,7 @@ data class TopicEntity(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
+    @ColumnInfo(name = "extra_json") val extraJson: String? = null,
 )
 
 @Entity(
@@ -150,6 +152,9 @@ interface AgentDao {
 
     @Query("DELETE FROM agents")
     suspend fun deleteAll()
+
+    @Query("DELETE FROM agents WHERE id = :agentId")
+    suspend fun deleteById(agentId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(agent: AgentEntity)
@@ -276,7 +281,7 @@ interface RegexRuleDao {
         MessageAttachmentEntity::class,
         RegexRuleEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -379,6 +384,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE agents ADD COLUMN extra_json TEXT")
+                db.execSQL("ALTER TABLE topics ADD COLUMN extra_json TEXT")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context,
@@ -392,6 +404,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
+                    MIGRATION_7_8,
                 )
                 .build()
     }

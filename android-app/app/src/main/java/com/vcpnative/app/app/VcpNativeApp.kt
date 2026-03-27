@@ -1,5 +1,9 @@
 package com.vcpnative.app.app
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -60,6 +64,16 @@ fun VcpNativeApp(
     NavHost(
         navController = navController,
         startDestination = VcpRoutes.BOOTSTRAP,
+        enterTransition = {
+            fadeIn(animationSpec = tween(300)) +
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, tween(300))
+        },
+        exitTransition = { fadeOut(animationSpec = tween(200)) },
+        popEnterTransition = {
+            fadeIn(animationSpec = tween(300)) +
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(300))
+        },
+        popExitTransition = { fadeOut(animationSpec = tween(200)) },
     ) {
         composable(VcpRoutes.BOOTSTRAP) {
             BootstrapRoute(

@@ -1,22 +1,49 @@
 package com.vcpnative.app.feature.bootstrap
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.RocketLaunch
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -134,35 +161,113 @@ private fun BootstrapScreen(
     uiState: BootstrapUiState,
 ) {
     Scaffold { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 24.dp, vertical = 32.dp),
-            verticalArrangement = Arrangement.Center,
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.surface,
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                        )
+                    )
+                )
         ) {
-            Text(
-                text = "VCPNative Bootstrap",
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = if (uiState.isConfigured) {
-                    "连接设置已存在，正在恢复工作区。"
-                } else {
-                    "首次启动，正在检查必需配置。"
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            CircularProgressIndicator()
-            Spacer(modifier = Modifier.height(24.dp))
-            BootstrapPathCard(title = "私有根目录", value = uiState.rootDir)
-            BootstrapPathCard(title = "附件目录", value = uiState.attachmentsDir)
-            BootstrapPathCard(title = "导入目录", value = uiState.importsDir)
-            uiState.importStatus?.let { status ->
-                BootstrapPathCard(title = "导入状态", value = status)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(horizontal = 24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(modifier = Modifier.height(48.dp))
+                
+                Box(
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(CircleShape)
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primary,
+                                    MaterialTheme.colorScheme.tertiary
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.RocketLaunch,
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = "VCPNative",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 2.sp
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = if (uiState.isConfigured) {
+                        "正在恢复工作区，请稍候… ✨"
+                    } else {
+                        "首次启动，正在唤醒系统服务… 🚀"
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(CircleShape),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                )
+
+                Spacer(modifier = Modifier.height(40.dp))
+
+                BootstrapPathCard(
+                    title = "私有根目录", 
+                    value = uiState.rootDir,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                BootstrapPathCard(
+                    title = "附件目录", 
+                    value = uiState.attachmentsDir,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                BootstrapPathCard(
+                    title = "导入目录", 
+                    value = uiState.importsDir,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                
+                uiState.importStatus?.let { status ->
+                    BootstrapPathCard(
+                        title = "数据导入状态", 
+                        value = status,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(48.dp))
             }
         }
     }
@@ -172,20 +277,53 @@ private fun BootstrapScreen(
 private fun BootstrapPathCard(
     title: String,
     value: String,
+    color: Color
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 12.dp),
+            .padding(bottom = 16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .fillMaxHeight()
+                    .background(color)
             )
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.Terminal,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = color
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = title, 
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = color
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+            }
         }
     }
 }
@@ -223,26 +361,86 @@ fun SetupGateScreen(
     onOpenSettings: () -> Unit,
 ) {
     Scaffold { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.surface,
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                        )
+                    )
+                ),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "Setup Gate",
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "当前还没有可用的 `vcpServerUrl` 和 `vcpApiKey`。先完成基础连接配置，再进入 Agent -> Topic -> Chat 工作流。",
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(modifier = Modifier.height(24.dp))
-            androidx.compose.material3.Button(onClick = onOpenSettings) {
-                Text(text = "进入设置")
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(32.dp))
+                
+                Text(
+                    text = "传送门尚未开启",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Text(
+                    text = "指挥官，我们还没能连接到核心服务器。\n请先完成基础设置，开启你的次元之旅吧！✨",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 24.sp
+                )
+                
+                Spacer(modifier = Modifier.height(40.dp))
+                
+                Button(
+                    onClick = onOpenSettings,
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(56.dp),
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    ),
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Outlined.Settings, contentDescription = null)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "前往设置中心",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }
 }
+

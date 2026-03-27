@@ -5,6 +5,7 @@ import com.vcpnative.app.chat.compiler.ChatRequestCompiler
 import com.vcpnative.app.chat.compiler.VcpCompatChatRequestCompiler
 import com.vcpnative.app.chat.session.StreamSessionManager
 import com.vcpnative.app.chat.session.VcpToolBoxStreamSessionManager
+import com.vcpnative.app.chat.summary.TopicSummarizer
 import com.vcpnative.app.data.attachment.AndroidChatAttachmentManager
 import com.vcpnative.app.data.attachment.ChatAttachmentManager
 import com.vcpnative.app.data.datastore.DataStoreSettingsRepository
@@ -100,6 +101,14 @@ class AppContainer(
 
     val streamSessionManager: StreamSessionManager by lazy {
         VcpToolBoxStreamSessionManager(
+            okHttpClient = okHttpClient,
+        )
+    }
+
+    val topicSummarizer: TopicSummarizer by lazy {
+        TopicSummarizer(
+            settingsRepository = settingsRepository,
+            workspaceRepository = workspaceRepository,
             okHttpClient = okHttpClient,
         )
     }

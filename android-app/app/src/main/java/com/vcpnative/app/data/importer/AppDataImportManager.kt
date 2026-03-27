@@ -287,6 +287,7 @@ class AppDataImportManager(
                 avatarPath = avatarImport?.targetRelativePath,
                 sortOrder = agentSortOrder,
                 updatedAt = System.currentTimeMillis(),
+                extraJson = extractExtraJson(config, HANDLED_AGENT_CONFIG_KEYS),
             )
             importedAgents += importedAgent
 
@@ -327,6 +328,7 @@ class AppDataImportManager(
                     title = topicObject.optString("name").ifBlank { sourceTopicId },
                     createdAt = createdAt,
                     updatedAt = updatedAt,
+                    extraJson = extractExtraJson(topicObject, HANDLED_TOPIC_KEYS),
                 )
             }
         }
@@ -352,12 +354,16 @@ class AppDataImportManager(
                 apiKey = settingsJson.optString("vcpApiKey"),
                 enableVcpToolInjection = settingsJson.optBoolean("enableVcpToolInjection", false),
                 enableAgentBubbleTheme = settingsJson.optBoolean("enableAgentBubbleTheme", false),
+                enableThoughtChainInjection = settingsJson.optBoolean("enableThoughtChainInjection", false),
+                enableContextSanitizer = settingsJson.optBoolean("enableContextSanitizer", false),
+                contextSanitizerDepth = settingsJson.optInt("contextSanitizerDepth", 2),
                 enableContextFolding = settingsJson.optBoolean("enableContextFolding", true),
                 contextFoldingKeepRecentMessages = settingsJson.optInt("contextFoldingKeepRecentMessages", 12),
                 contextFoldingTriggerMessageCount = settingsJson.optInt("contextFoldingTriggerMessageCount", 24),
                 contextFoldingTriggerCharCount = settingsJson.optInt("contextFoldingTriggerCharCount", 24_000),
                 contextFoldingExcerptCharLimit = settingsJson.optInt("contextFoldingExcerptCharLimit", 160),
                 contextFoldingMaxSummaryEntries = settingsJson.optInt("contextFoldingMaxSummaryEntries", 40),
+                topicSummaryModel = settingsJson.optString("topicSummaryModel").ifBlank { "gemini-2.5-flash" },
                 lastAgentId = lastAgentId,
                 lastTopicConversationId = lastTopicConversationId,
             ),
@@ -540,12 +546,16 @@ class AppDataImportManager(
         settingsRepository.saveCompilerOptions(
             enableVcpToolInjection = parsed.settings.enableVcpToolInjection,
             enableAgentBubbleTheme = parsed.settings.enableAgentBubbleTheme,
+            enableThoughtChainInjection = parsed.settings.enableThoughtChainInjection,
+            enableContextSanitizer = parsed.settings.enableContextSanitizer,
+            contextSanitizerDepth = parsed.settings.contextSanitizerDepth,
             enableContextFolding = parsed.settings.enableContextFolding,
             contextFoldingKeepRecentMessages = parsed.settings.contextFoldingKeepRecentMessages,
             contextFoldingTriggerMessageCount = parsed.settings.contextFoldingTriggerMessageCount,
             contextFoldingTriggerCharCount = parsed.settings.contextFoldingTriggerCharCount,
             contextFoldingExcerptCharLimit = parsed.settings.contextFoldingExcerptCharLimit,
             contextFoldingMaxSummaryEntries = parsed.settings.contextFoldingMaxSummaryEntries,
+            topicSummaryModel = parsed.settings.topicSummaryModel,
         )
         settingsRepository.saveLastSession(
             agentId = parsed.settings.lastAgentId,
@@ -838,6 +848,21 @@ class AppDataImportManager(
         return "[导入附件消息：${names.joinToString(separator = ", ")}]"
     }
 
+    private fun extractExtraJson(
+        source: JSONObject,
+        handledKeys: Set<String>,
+    ): String? {
+        val extra = JSONObject()
+        val iterator = source.keys()
+        while (iterator.hasNext()) {
+            val key = iterator.next()
+            if (key !in handledKeys) {
+                extra.put(key, source.opt(key))
+            }
+        }
+        return extra.takeIf { it.length() > 0 }?.toString()
+    }
+
     private fun parseRegexRules(
         agentId: String,
         agentDir: File,
@@ -1030,12 +1055,16 @@ class AppDataImportManager(
         val apiKey: String,
         val enableVcpToolInjection: Boolean,
         val enableAgentBubbleTheme: Boolean,
+        val enableThoughtChainInjection: Boolean,
+        val enableContextSanitizer: Boolean,
+        val contextSanitizerDepth: Int,
         val enableContextFolding: Boolean,
         val contextFoldingKeepRecentMessages: Int,
         val contextFoldingTriggerMessageCount: Int,
         val contextFoldingTriggerCharCount: Int,
         val contextFoldingExcerptCharLimit: Int,
         val contextFoldingMaxSummaryEntries: Int,
+        val topicSummaryModel: String,
         val lastAgentId: String?,
         val lastTopicConversationId: String?,
     )
@@ -1082,6 +1111,30 @@ class AppDataImportManager(
             "settings.json",
             "Agents",
             "UserData",
+        )
+        val HANDLED_AGENT_CONFIG_KEYS = setOf(
+            "name",
+            "systemPrompt",
+            "promptMode",
+            "originalSystemPrompt",
+            "advancedSystemPrompt",
+            "presetSystemPrompt",
+            "presetPromptPath",
+            "selectedPreset",
+            "model",
+            "temperature",
+            "contextTokenLimit",
+            "maxOutputTokens",
+            "top_p",
+            "top_k",
+            "streamOutput",
+            "topics",
+            "stripRegexes",
+        )
+        val HANDLED_TOPIC_KEYS = setOf(
+            "id",
+            "name",
+            "createdAt",
         )
         val SUPPORTED_AVATAR_EXTENSIONS = setOf(
             "png",

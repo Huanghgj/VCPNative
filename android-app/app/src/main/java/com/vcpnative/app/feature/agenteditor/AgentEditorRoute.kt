@@ -1,7 +1,9 @@
 package com.vcpnative.app.feature.agenteditor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,12 +11,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -28,13 +36,18 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -462,36 +475,65 @@ private fun AgentEditorScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(text = "Agent 配置")
-                        if (uiState.agentId.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.tertiary
+                            )
+                        )
+                    )
+            ) {
+                TopAppBar(
+                    title = {
+                        Column {
                             Text(
-                                text = uiState.agentId,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = "Agent 设定工坊 ✨",
+                                fontWeight = FontWeight.Black
+                            )
+                            if (uiState.agentId.isNotBlank()) {
+                                Text(
+                                    text = "ID: ${uiState.agentId}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                                )
+                            }
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = "返回",
                             )
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = "返回",
-                        )
-                    }
-                },
-                actions = {
-                    TextButton(
-                        onClick = onSave,
-                        enabled = uiState.canSave,
-                    ) {
-                        Text(text = if (uiState.isSaving) "保存中" else "保存")
-                    }
-                },
-            )
+                    },
+                    actions = {
+                        TextButton(
+                            onClick = onSave,
+                            enabled = uiState.canSave,
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f)
+                            )
+                        ) {
+                            Text(
+                                text = if (uiState.isSaving) "保存中..." else "保存",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                )
+            }
         },
     ) { innerPadding ->
         if (uiState.isLoading) {
@@ -502,9 +544,17 @@ private fun AgentEditorScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 4.dp
+                )
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(text = "正在加载 Agent 配置…")
+                Text(
+                    text = "正在读取小伙伴的记忆...",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
             }
             return@Scaffold
         }
@@ -518,16 +568,17 @@ private fun AgentEditorScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             uiState.loadError?.let { loadError ->
-                SectionCard(title = "加载失败") {
+                SectionCard(title = "❌ 呜呜，加载失败了") {
                     Text(
                         text = loadError,
                         color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 return@Column
             }
 
-            SectionCard(title = "基础配置") {
+            SectionCard(title = "🎀 基础设定") {
                 OutlinedTextField(
                     value = uiState.name,
                     onValueChange = onNameChange,
@@ -535,6 +586,7 @@ private fun AgentEditorScreen(
                     label = { Text(text = "Agent 名称") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
                 OutlinedTextField(
                     value = uiState.model,
@@ -543,6 +595,7 @@ private fun AgentEditorScreen(
                     label = { Text(text = "模型 ID") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -550,38 +603,54 @@ private fun AgentEditorScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = uiState.modelStatus ?: "可从 /v1/models 拉取模型列表后直接点选。",
+                        text = uiState.modelStatus ?: "✨ 可从 /v1/models 拉取模型列表后直接点选哦。",
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
                     OutlinedButton(
                         onClick = onRefreshModels,
                         enabled = !uiState.isRefreshingModels && !uiState.isSaving,
+                        shape = MaterialTheme.shapes.medium
                     ) {
-                        Text(text = if (uiState.isRefreshingModels) "刷新中" else "刷新模型")
+                        Text(text = if (uiState.isRefreshingModels) "刷新中..." else "刷新模型")
                     }
                 }
                 if (uiState.availableModels.isNotEmpty()) {
                     Text(
-                        text = "点击下方模型可直接填入。",
+                        text = "点击下方模型可直接填入哦 👇",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         uiState.availableModels.forEach { model ->
-                            OutlinedButton(
-                                onClick = { onModelChange(model.id) },
-                                enabled = !uiState.isSaving,
-                                modifier = Modifier.fillMaxWidth(),
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.medium)
+                                    .clickable(enabled = !uiState.isSaving) { onModelChange(model.id) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (uiState.model == model.id) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                ),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                             ) {
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Text(text = model.id)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp)
+                                ) {
+                                    Text(
+                                        text = model.id,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (uiState.model == model.id) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    )
                                     model.ownedBy?.takeIf { it.isNotBlank() }?.let { ownedBy ->
                                         Text(
                                             text = ownedBy,
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = if (uiState.model == model.id) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                 }
@@ -596,6 +665,7 @@ private fun AgentEditorScreen(
                     label = { Text(text = "Temperature") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -604,11 +674,12 @@ private fun AgentEditorScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "流式输出",
+                            text = "流式输出 🌊",
                             style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "关闭后会等待完整回复，再一次性渲染。",
+                            text = "关闭后会等待完整回复，再一次性渲染哦。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -621,12 +692,32 @@ private fun AgentEditorScreen(
                 }
             }
 
-            SectionCard(title = "系统提示词") {
-                Text(
-                    text = "保存时会按当前 promptMode 解析活跃提示词，并同步回写兼容字段 systemPrompt。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            SectionCard(title = "🪄 灵魂注入 (Prompt)") {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)),
+                    shape = MaterialTheme.shapes.medium,
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "保存时会按当前 promptMode 解析活跃提示词，并同步回写兼容字段 systemPrompt 呢~",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+
                 PROMPT_MODE_OPTIONS.forEach { option ->
                     PromptModeOption(
                         label = option.label,
@@ -646,12 +737,13 @@ private fun AgentEditorScreen(
                             label = { Text(text = "advancedSystemPrompt JSON / 原始文本") },
                             enabled = !uiState.isSaving,
                             minLines = 10,
+                            shape = MaterialTheme.shapes.medium
                         )
                     }
 
                     "preset" -> {
                         Text(
-                            text = "兼容 VCPChat 的 `presetPromptPath + selectedPreset + presetSystemPrompt` 语义。",
+                            text = "✨ 兼容 VCPChat 的 `presetPromptPath + selectedPreset + presetSystemPrompt` 语义。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -662,6 +754,7 @@ private fun AgentEditorScreen(
                             label = { Text(text = "presetPromptPath") },
                             enabled = !uiState.isSaving,
                             singleLine = true,
+                            shape = MaterialTheme.shapes.medium
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -669,16 +762,18 @@ private fun AgentEditorScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = uiState.presetStatus ?: "相对路径 `./AppData/...` 会映射到已导入的 compat AppData。",
+                                text = uiState.presetStatus ?: "✨ 相对路径 `./AppData/...` 会映射到已导入的 compat AppData 呢。",
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
                             OutlinedButton(
                                 onClick = onRefreshPresets,
                                 enabled = !uiState.isRefreshingPresets && !uiState.isSaving,
+                                shape = MaterialTheme.shapes.medium
                             ) {
-                                Text(text = if (uiState.isRefreshingPresets) "刷新中" else "刷新预设")
+                                Text(text = if (uiState.isRefreshingPresets) "刷新中..." else "刷新预设")
                             }
                         }
                         if (uiState.resolvedPresetPath.isNotBlank()) {
@@ -693,11 +788,12 @@ private fun AgentEditorScreen(
                                 text = "当前选择: ${uiState.selectedPreset}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                         if (uiState.availablePresets.isNotEmpty()) {
                             Text(
-                                text = "点击下方预设可直接载入内容。",
+                                text = "点击下方预设可直接载入内容哦 👇",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -713,7 +809,7 @@ private fun AgentEditorScreen(
                             }
                             if (uiState.availablePresets.size > 12) {
                                 Text(
-                                    text = "其余 ${uiState.availablePresets.size - 12} 个预设已省略显示。",
+                                    text = "其余 ${uiState.availablePresets.size - 12} 个预设已省略显示了哦。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -726,6 +822,7 @@ private fun AgentEditorScreen(
                             label = { Text(text = "presetSystemPrompt") },
                             enabled = !uiState.isSaving,
                             minLines = 8,
+                            shape = MaterialTheme.shapes.medium
                         )
                     }
 
@@ -737,26 +834,35 @@ private fun AgentEditorScreen(
                             label = { Text(text = "originalSystemPrompt") },
                             enabled = !uiState.isSaving,
                             minLines = 8,
+                            shape = MaterialTheme.shapes.medium
                         )
                     }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "当前生效提示词预览",
+                        text = "当前生效提示词预览 👀",
                         style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
                     )
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
                         Text(
-                            text = uiState.activeSystemPromptPreview.ifBlank { "当前模式下还没有可生效的系统提示词。" },
+                            text = uiState.activeSystemPromptPreview.ifBlank { "当前模式下还没有可生效的系统提示词哦~" },
                             modifier = Modifier.padding(16.dp),
                             style = MaterialTheme.typography.bodyMedium,
+                            color = if (uiState.activeSystemPromptPreview.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
             }
 
-            SectionCard(title = "生成参数") {
+            SectionCard(title = "⚙️ 运转参数") {
                 OutlinedTextField(
                     value = uiState.contextTokenLimit,
                     onValueChange = onContextTokenLimitChange,
@@ -764,6 +870,7 @@ private fun AgentEditorScreen(
                     label = { Text(text = "contextTokenLimit") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
                 OutlinedTextField(
                     value = uiState.maxOutputTokens,
@@ -772,6 +879,7 @@ private fun AgentEditorScreen(
                     label = { Text(text = "maxOutputTokens") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
                 OutlinedTextField(
                     value = uiState.topP,
@@ -780,6 +888,7 @@ private fun AgentEditorScreen(
                     label = { Text(text = "top_p") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
                 OutlinedTextField(
                     value = uiState.topK,
@@ -788,28 +897,59 @@ private fun AgentEditorScreen(
                     label = { Text(text = "top_k") },
                     enabled = !uiState.isSaving,
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium
                 )
             }
 
             uiState.saveStatus?.let { saveStatus ->
-                Text(
-                    text = saveStatus,
-                    color = if (uiState.isSaving) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (uiState.isSaving) MaterialTheme.colorScheme.surfaceVariant 
+                        else MaterialTheme.colorScheme.primaryContainer
+                    ),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text(
+                        text = saveStatus,
+                        color = if (uiState.isSaving) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
             }
 
             Button(
                 onClick = onSave,
                 enabled = uiState.canSave,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = MaterialTheme.shapes.large,
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
             ) {
-                Text(text = if (uiState.isSaving) "保存中…" else "保存 Agent 配置")
+                Icon(
+                    imageVector = Icons.Outlined.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (uiState.isSaving) "正在施放保存魔法..." else "保存 Agent 设定",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 16.sp
+                )
             }
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -819,16 +959,34 @@ private fun SectionCard(
     title: String,
     content: @Composable () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(18.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             content()
         }
     }
@@ -842,25 +1000,41 @@ private fun PromptModeOption(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(vertical = 4.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(enabled = enabled, onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
-        RadioButton(
-            selected = selected,
-            onClick = if (enabled) onClick else null,
-            enabled = enabled,
-        )
-        Column(modifier = Modifier.padding(start = 8.dp)) {
-            Text(text = label)
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(
+                selected = selected,
+                onClick = null,
+                enabled = enabled,
             )
+            Column(modifier = Modifier.padding(start = 12.dp)) {
+                Text(
+                    text = label,
+                    fontWeight = FontWeight.Bold,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -872,29 +1046,43 @@ private fun PresetPromptRow(
     enabled: Boolean,
     onApply: () -> Unit,
 ) {
-    OutlinedButton(
-        onClick = onApply,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(enabled = enabled, onClick = onApply),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer 
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 2.dp else 0.dp)
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
             Text(
                 text = preset.name,
+                fontWeight = FontWeight.Bold,
                 color = if (selected) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.onSecondaryContainer
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 },
             )
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "${preset.extension} · ${formatPresetSize(preset.size)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
                 text = preset.path,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f)
+                else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

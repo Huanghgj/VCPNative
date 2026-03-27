@@ -81,11 +81,27 @@ class VcpCompatChatRequestCompiler(
         val regexRules = workspaceRepository.loadRegexRules(agentId)
         val depthMap = buildMessageDepthMap(historyMessages)
         val compatHistoryByMessageId = topic?.let { loadCompatHistoryEntries(agentId, it.sourceTopicId) }.orEmpty()
+        val stripThoughtChains = !settings.enableThoughtChainInjection
         val history = historyMessages.map { message ->
+            val textAfterThoughtStrip = if (stripThoughtChains) {
+                ThoughtChainStripper.strip(message.content)
+            } else {
+                message.content
+            }
+            val textAfterSanitizer = if (settings.enableContextSanitizer && message.role == "assistant") {
+                val depth = depthMap[message.id]
+                if (depth != null && depth >= settings.contextSanitizerDepth) {
+                    ContextSanitizer.sanitize(textAfterThoughtStrip)
+                } else {
+                    textAfterThoughtStrip
+                }
+            } else {
+                textAfterThoughtStrip
+            }
             compileMessage(
                 message = message,
                 normalizedText = applyContextRegexRules(
-                    text = message.content,
+                    text = textAfterSanitizer,
                     role = message.role,
                     depth = depthMap[message.id],
                     regexRules = regexRules,

@@ -27,6 +27,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -128,6 +129,16 @@ fun ChatMessageContent(
         return
     }
 
+    // 流式模式：直接显示纯文本，不做任何解析/渲染，避免卡顿
+    if (mode == ChatRenderMode.Streaming) {
+        StreamingTextBlockView(
+            text = content,
+            modifier = modifier,
+        )
+        return
+    }
+
+    // 以下是 Final 模式的完整渲染逻辑
     if (shouldRenderMessageInSafeMode(content)) {
         SafePlainTextBlockView(
             text = buildSafeRenderPreview(content),
@@ -2164,6 +2175,11 @@ private fun BrowserHtmlBlockView(
         buildBrowserHtmlDocument(renderState.html)
     }
 
+    // 懒加载：一旦首次进入 compose（即滑入可见区域），立即激活，
+    // 之后永远保持激活，避免 timing 问题导致首次渲染卡在占位框。
+    // pauseDynamicContent 仅控制 WebView 的暂停/恢复，不再阻止创建。
+    val activated = true
+
     LaunchedEffect(wrappedHtml) {
         if (loadedHtml == null) {
             loadedHtml = wrappedHtml
@@ -2174,11 +2190,24 @@ private fun BrowserHtmlBlockView(
     }
 
     val documentHtml = loadedHtml ?: wrappedHtml
+    val placeholderHeight = with(density) { contentHeightPx.coerceAtLeast(minHeightPx).toDp() }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (!activated) {
+            // 未激活：轻量占位，保持高度一致避免列表跳动
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(placeholderHeight)
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        shape = RoundedCornerShape(12.dp),
+                    ),
+            )
+        } else {
         AndroidView(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2192,6 +2221,7 @@ private fun BrowserHtmlBlockView(
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = false
                     settings.loadsImagesAutomatically = true
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                     settings.cacheMode = WebSettings.LOAD_DEFAULT
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
@@ -2214,7 +2244,6 @@ private fun BrowserHtmlBlockView(
                         BrowserHtmlBridge { cssHeight ->
                             val heightPx = scaledBrowserHtmlHeightToPx(
                                 cssHeight = cssHeight,
-                                scale = scale,
                                 density = density.density,
                             )
                             if (abs(heightPx - contentHeightPx) >= 2) {
@@ -2224,6 +2253,29 @@ private fun BrowserHtmlBlockView(
                         BROWSER_HTML_BRIDGE_NAME,
                     )
                     webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                        ): WebResourceResponse? {
+                            val url = request?.url?.toString() ?: return null
+                            // Proxy HTTP image requests through URLConnection to
+                            // avoid WebView mixed-content / base-URL restrictions.
+                            if (url.startsWith("http://") && BROWSER_IMAGE_URL_REGEX.containsMatchIn(url)) {
+                                return try {
+                                    val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                                    conn.connectTimeout = 15_000
+                                    conn.readTimeout = 15_000
+                                    conn.instanceFollowRedirects = true
+                                    val contentType = conn.contentType ?: "image/*"
+                                    val encoding = conn.contentEncoding
+                                    WebResourceResponse(contentType, encoding, conn.inputStream)
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+                            return null
+                        }
+
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
                             request: WebResourceRequest?,
@@ -2250,11 +2302,11 @@ private fun BrowserHtmlBlockView(
                                 density = density.density,
                                 minHeightPx = minHeightPx,
                                 onHeightChanged = { heightPx ->
-                                    // Only grow from onPageFinished — contentHeight
-                                    // can be 0 before layout completes, which would
-                                    // collapse the view to minHeightPx.  The JS bridge
-                                    // will report the authoritative height shortly.
-                                    if (heightPx > contentHeightPx + 2) {
+                                    // Accept both growth and shrinkage from
+                                    // onPageFinished — earlier commits only
+                                    // allowed growth, but that left stale
+                                    // oversized heights when content changed.
+                                    if (abs(heightPx - contentHeightPx) >= 2) {
                                         contentHeightPx = heightPx
                                     }
                                 },
@@ -2303,6 +2355,7 @@ private fun BrowserHtmlBlockView(
                 webView.destroy()
             },
         )
+        } // end activated
 
         if (renderState.wasTruncated) {
             Text(
@@ -2323,7 +2376,6 @@ private fun updateBrowserHtmlContentHeight(
     webView.post {
         val measuredHeight = scaledBrowserHtmlHeightToPx(
             cssHeight = webView.contentHeight.toFloat(),
-            scale = webView.scale,
             density = density,
         ).coerceAtLeast(minHeightPx)
         onHeightChanged(measuredHeight)
@@ -2332,15 +2384,16 @@ private fun updateBrowserHtmlContentHeight(
 
 private fun scaledBrowserHtmlHeightToPx(
     cssHeight: Float,
-    scale: Float,
     density: Float,
 ): Int {
     if (cssHeight <= 0f) {
         return 0
     }
 
-    val effectiveScale = scale.takeIf { it > 0f } ?: density
-    return (cssHeight * effectiveScale).roundToInt()
+    // JS reports CSS px (≈ dp with viewport width=device-width).
+    // Multiply by screen density to convert to physical pixels,
+    // which is what Compose's `.height(px.toDp())` expects.
+    return (cssHeight * density).roundToInt()
 }
 
 private fun applyBrowserHtmlPausedState(
@@ -2362,6 +2415,11 @@ private fun applyBrowserHtmlPausedState(
         if (paused) BROWSER_HTML_PAUSE_JS else BROWSER_HTML_RESUME_JS,
         null,
     )
+    if (!paused) {
+        // Re-measure height after resume — the WebView may have completed
+        // loading while paused, so the height could be stale.
+        webView.evaluateJavascript(BROWSER_HTML_HEIGHT_JS, null)
+    }
 }
 
 @Composable
@@ -3947,6 +4005,10 @@ private fun NativeMarkdownBlockView(
             },
         )
     }
+    // 缓存 Markwon 渲染结果，避免滚动时反复解析 markdown
+    val spanned = remember(markwon, normalizedText) {
+        markwon.toMarkdown(normalizedText)
+    }
 
     AndroidView(
         modifier = modifier.fillMaxWidth(),
@@ -3974,7 +4036,7 @@ private fun NativeMarkdownBlockView(
                 longPressState.value != null
             }
             applyTextStyle(textView, bodyStyle)
-            markwon.setMarkdown(textView, normalizedText)
+            markwon.setParsedMarkdown(textView, spanned)
         },
     )
 }
@@ -4435,11 +4497,12 @@ private fun handleBrowserHtmlNavigation(
     return false
 }
 
-private const val BROWSER_HTML_BASE_URL = "https://vcpnative.invalid/"
+private const val BROWSER_HTML_BASE_URL = "http://vcpnative.invalid/"
 private val BROWSER_HTML_ADVANCED_TAGS_REGEX = Regex("""(?is)<(style|svg|filter|pattern|mask|canvas|iframe|video|audio)\b""")
 private val BROWSER_HTML_EVENT_HANDLER_REGEX = Regex("""(?is)\bon(?:click|mouseover|mouseout|mouseenter|mouseleave|load|error)\s*=""")
 private val BROWSER_HTML_CSS_FEATURES_REGEX = Regex("""(?is)(@keyframes|animation\s*:|backdrop-filter\s*:|filter\s*:|perspective\s*:|grid-template-columns\s*:|grid-template-rows\s*:|display\s*:\s*grid|display\s*:\s*flex|position\s*:\s*fixed|position\s*:\s*sticky|transform\s*:|clip-path\s*:|radial-gradient\s*\(|linear-gradient\s*\()""")
 private val BROWSER_HTML_CSS_VAR_REGEX = Regex("""(?is)var\s*\(--""")
+private val BROWSER_IMAGE_URL_REGEX = Regex("""\.(?:jpe?g|png|gif|webp|bmp|svg)(?:\?[^\s]*)?$""", RegexOption.IGNORE_CASE)
 private val SAFE_MODE_HTML_TAG_REGEX = Regex("""</?[a-zA-Z][^>]*>""")
 private const val BROWSER_HTML_BRIDGE_NAME = "VcpNativeBridge"
 private const val BROWSER_HTML_HEIGHT_JS =

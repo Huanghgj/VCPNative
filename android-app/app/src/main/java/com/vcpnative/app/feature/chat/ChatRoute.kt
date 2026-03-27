@@ -14,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -26,10 +27,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Stop
@@ -46,6 +51,7 @@ import androidx.compose.material3.DividerDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,6 +63,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -72,10 +79,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -94,6 +105,7 @@ import com.vcpnative.app.chat.render.ChatMessageReaderContent
 import com.vcpnative.app.chat.render.ChatMessageContent
 import com.vcpnative.app.chat.render.ChatRenderMode
 import com.vcpnative.app.chat.render.shouldUseBrowserHtmlRenderer
+import com.vcpnative.app.chat.summary.TopicSummarizer
 import com.vcpnative.app.chat.session.StreamSessionManager
 import com.vcpnative.app.data.attachment.ChatAttachmentManager
 import com.vcpnative.app.data.datastore.SettingsRepository
@@ -120,6 +132,7 @@ class ChatViewModel(
     private val requestCompiler: ChatRequestCompiler,
     private val streamSessionManager: StreamSessionManager,
     private val chatAttachmentManager: ChatAttachmentManager,
+    private val topicSummarizer: TopicSummarizer,
 ) : ViewModel() {
     val messages: StateFlow<List<MessageEntity>> = workspaceRepository
         .observeMessages(topicId)
@@ -533,6 +546,7 @@ class ChatViewModel(
                             status = "complete",
                             force = true,
                         )
+                        tryAutoSummarize()
                     }
                 }
 
@@ -581,6 +595,15 @@ class ChatViewModel(
         }
     }
 
+    private fun tryAutoSummarize() {
+        viewModelScope.launch {
+            runCatching {
+                val agentName = workspaceRepository.findAgent(agentId)?.name ?: agentId
+                topicSummarizer.trySummarize(topicId, agentName)
+            }
+        }
+    }
+
     companion object {
         private const val ASSISTANT_STREAM_PERSIST_INTERVAL_MS = 240L
 
@@ -608,6 +631,7 @@ class ChatViewModel(
                     requestCompiler = appContainer.requestCompiler,
                     streamSessionManager = appContainer.streamSessionManager,
                     chatAttachmentManager = appContainer.chatAttachmentManager,
+                    topicSummarizer = appContainer.topicSummarizer,
                 )
             }
         }
@@ -716,9 +740,21 @@ private fun ChatScreen(
     var draft by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val bubbleSpeechController = rememberBubbleSpeechController()
+    val density = LocalDensity.current
+    val autoFollowThresholdPx = remember(density) { with(density) { 96.dp.roundToPx() } }
+    var autoFollowBottom by rememberSaveable { mutableStateOf(true) }
     ChatPerformanceMetricsState(isSending = isSending)
     val latestCompletedAssistantMessageId = remember(messages) {
         messages.lastOrNull { it.role == "assistant" && it.status !in setOf("draft", "streaming") }?.id
+    }
+    val isNearBottom by remember(listState, autoFollowThresholdPx, messages.size) {
+        derivedStateOf {
+            isNearChatBottom(
+                listState = listState,
+                lastIndex = messages.size,
+                thresholdPx = autoFollowThresholdPx,
+            )
+        }
     }
 
     // 方案 B：滚动时全局暂停动态内容，停止后 200ms 恢复
@@ -744,64 +780,140 @@ private fun ChatScreen(
         }
     }
 
-    LaunchedEffect(messages.lastOrNull()?.id, messages.lastOrNull()?.content, messages.lastOrNull()?.status) {
-        if (messages.isNotEmpty()) {
-            val lastMessage = messages.last()
-            if (lastMessage.status in setOf("draft", "streaming")) {
-                listState.scrollToItem(messages.lastIndex)
-            } else {
-                listState.animateScrollToItem(messages.lastIndex)
+    LaunchedEffect(listState, autoFollowThresholdPx, messages.size) {
+        snapshotFlow { listState.isScrollInProgress to isNearBottom }
+            .collect { (scrolling, nearBottom) ->
+                when {
+                    scrolling -> autoFollowBottom = nearBottom
+                    nearBottom -> autoFollowBottom = true
+                }
+            }
+    }
+
+    LaunchedEffect(
+        messages.lastOrNull()?.id,
+        messages.lastOrNull()?.content,
+        messages.lastOrNull()?.status,
+        autoFollowBottom,
+    ) {
+        if (messages.isEmpty() || !autoFollowBottom) {
+            return@LaunchedEffect
+        }
+
+        val lastMessage = messages.last()
+        if (lastMessage.status in setOf("draft", "streaming")) {
+            // 流式消息：滚到列表绝对底部（footer item），而不是最后一条消息的顶部
+            listState.scrollToItem(messages.size)
+        } else {
+            listState.animateScrollToItem(messages.size)
+        }
+    }
+
+    LaunchedEffect(listState, autoFollowBottom, messages.lastOrNull()?.id) {
+        if (messages.isEmpty() || !autoFollowBottom) {
+            return@LaunchedEffect
+        }
+
+        snapshotFlow {
+            val layoutInfo = listState.layoutInfo
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+            Triple(
+                layoutInfo.totalItemsCount,
+                lastVisible?.index ?: -1,
+                lastVisible?.let { it.offset + it.size - layoutInfo.viewportEndOffset } ?: Int.MIN_VALUE,
+            )
+        }.collect {
+            if (listState.isScrollInProgress) {
+                return@collect
+            }
+
+            val gapToBottom = distanceToChatBottom(
+                listState = listState,
+                lastIndex = messages.size,
+            )
+            if (gapToBottom > 0) {
+                listState.scrollToItem(messages.size)
             }
         }
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(text = title)
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.tertiary
+                            )
                         )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = "返回",
-                        )
-                    }
-                },
-                actions = {
-                    TextButton(onClick = onOpenTopics) {
-                        Text(text = "话题")
-                    }
-                    TextButton(onClick = onCreateTopic) {
-                        Text(text = "新建")
-                    }
-                    IconButton(onClick = onOpenAgentEditor) {
-                        Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = "编辑 Agent",
-                        )
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            imageVector = Icons.Outlined.Settings,
-                            contentDescription = "设置",
-                        )
-                    }
-                },
-            )
+                    )
+            ) {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                text = title,
+                                fontWeight = FontWeight.Black,
+                            )
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onNavigateBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = "返回",
+                            )
+                        }
+                    },
+                    actions = {
+                        TextButton(onClick = onOpenTopics) {
+                            Text(
+                                text = "话题",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        TextButton(onClick = onCreateTopic) {
+                            Text(
+                                text = "新建",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        IconButton(onClick = onOpenAgentEditor) {
+                            Icon(
+                                imageVector = Icons.Outlined.Edit,
+                                contentDescription = "编辑 Agent",
+                            )
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(
+                                imageVector = Icons.Outlined.Settings,
+                                contentDescription = "设置",
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
+                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                )
+            }
         },
         bottomBar = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .imePadding()
+                    .navigationBarsPadding()
                     .background(MaterialTheme.colorScheme.surface),
             ) {
                 HorizontalDivider(color = DividerDefaults.color)
@@ -845,34 +957,49 @@ private fun ChatScreen(
                         value = draft,
                         onValueChange = { draft = it },
                         modifier = Modifier.weight(1f),
-                        label = { Text(text = "输入消息") },
-                        placeholder = { Text(text = "消息会直接发到 VCPToolBox，并消费 SSE 回复") },
+                        placeholder = { Text(text = "说点什么吧～") },
                         enabled = !isSending,
                         maxLines = 5,
+                        shape = RoundedCornerShape(24.dp),
                     )
                     if (isSending) {
-                        IconButton(
+                        FloatingActionButton(
                             onClick = onInterrupt,
+                            modifier = Modifier.size(48.dp),
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                            shape = CircleShape,
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.Stop,
                                 contentDescription = "中止回复",
-                                modifier = Modifier.size(28.dp),
+                                modifier = Modifier.size(24.dp),
                             )
                         }
                     } else {
-                        IconButton(
+                        FloatingActionButton(
                             onClick = {
                                 val snapshot = draft
                                 draft = ""
                                 onSendMessage(snapshot)
                             },
-                            enabled = draft.isNotBlank() || pendingAttachments.isNotEmpty(),
+                            modifier = Modifier.size(48.dp),
+                            containerColor = if (draft.isNotBlank() || pendingAttachments.isNotEmpty()) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            contentColor = if (draft.isNotBlank() || pendingAttachments.isNotEmpty()) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            shape = CircleShape,
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Outlined.Send,
                                 contentDescription = "发送",
-                                modifier = Modifier.size(28.dp),
+                                modifier = Modifier.size(22.dp),
                             )
                         }
                     }
@@ -887,15 +1014,35 @@ private fun ChatScreen(
                     .padding(innerPadding)
                     .padding(24.dp),
                 verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                Box(
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.AutoAwesome,
+                        contentDescription = null,
+                        modifier = Modifier.size(52.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = "单聊主链路已经接到真实网络层。",
+                    text = "准备好开始对话了吗？",
                     style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
                 )
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "现在发送消息会经过本地 request compiler、真实 VCPToolBox 请求和 SSE 消费，再持续回写到 Room。",
-                    modifier = Modifier.padding(top = 12.dp),
+                    text = "在下方输入你的第一条消息，\n开启一段奇妙的冒险对话吧！",
                     style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
                 )
             }
         } else {
@@ -917,7 +1064,7 @@ private fun ChatScreen(
                         attachments = attachmentsByMessageId[message.id].orEmpty(),
                         canRegenerateAssistant = !isSending && message.id == latestCompletedAssistantMessageId,
                         isSending = isSending,
-                        pauseDynamicContent = scrollPaused || message.id !in visibleMessageIds,
+                        pauseDynamicContent = message.id !in visibleMessageIds,
                         onSendMessage = onSendMessage,
                         onRetryAssistantMessage = onRetryAssistantMessage,
                         onEditAssistantMessage = onEditAssistantMessage,
@@ -929,6 +1076,10 @@ private fun ChatScreen(
                         onCreateTopic = onCreateTopic,
                         onOpenAttachment = onOpenAttachment,
                     )
+                }
+                // 底部锚点：自动滚动目标，确保能滚到最后一条消息的最底部
+                item(key = "_bottom_anchor") {
+                    Spacer(modifier = Modifier.height(1.dp))
                 }
             }
         }
@@ -948,6 +1099,42 @@ private fun ChatPerformanceMetricsState(
             stateHolder?.removeState("ChatStreaming")
             stateHolder?.removeState("Screen")
         }
+    }
+}
+
+private fun isNearChatBottom(
+    listState: LazyListState,
+    lastIndex: Int,
+    thresholdPx: Int,
+): Boolean {
+    if (lastIndex < 0) {
+        return true
+    }
+
+    val layoutInfo = listState.layoutInfo
+    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
+    if (lastVisible.index < lastIndex) {
+        return false
+    }
+
+    val overflowPx = lastVisible.offset + lastVisible.size - layoutInfo.viewportEndOffset
+    return overflowPx <= thresholdPx
+}
+
+private fun distanceToChatBottom(
+    listState: LazyListState,
+    lastIndex: Int,
+): Int {
+    if (lastIndex < 0) {
+        return 0
+    }
+
+    val layoutInfo = listState.layoutInfo
+    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return 0
+    return if (lastVisible.index < lastIndex) {
+        Int.MAX_VALUE
+    } else {
+        maxOf(0, lastVisible.offset + lastVisible.size - layoutInfo.viewportEndOffset)
     }
 }
 
@@ -1018,6 +1205,11 @@ private fun MessageBubble(
     } else {
         PaddingValues(16.dp)
     }
+    val bubbleShape = when {
+        message.role == "user" -> RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp)
+        isBrowserHtmlMessage -> RoundedCornerShape(20.dp)
+        else -> RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
+    }
     val showRoleLabel = !(message.role == "assistant" && isBrowserHtmlMessage)
     val isStreamingMessage = isStreamingMessage(message)
     val canShowAssistantMenu = message.role == "assistant" && displayContent.isNotBlank()
@@ -1067,12 +1259,12 @@ private fun MessageBubble(
                 )
                 .background(
                     color = bubbleBackgroundColor,
-                    shape = RoundedCornerShape(20.dp),
+                    shape = bubbleShape,
                 )
                 .border(
                     width = if (bubbleBorderColor == Color.Transparent) 0.dp else 1.dp,
                     color = bubbleBorderColor,
-                    shape = RoundedCornerShape(20.dp),
+                    shape = bubbleShape,
                 )
                 .padding(bubblePadding),
         ) {
@@ -1087,7 +1279,7 @@ private fun MessageBubble(
                 if (showRoleLabel) {
                     Spacer(modifier = Modifier.height(6.dp))
                 }
-                key(message.id, message.status, message.updatedAt) {
+                key(message.id) {
                     ChatMessageContent(
                         content = displayContent,
                         mode = if (isStreamingMessage) {
