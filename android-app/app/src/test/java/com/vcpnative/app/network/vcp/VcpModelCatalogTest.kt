@@ -146,22 +146,30 @@ private class FakeSettingsRepository(
     override suspend fun saveCompilerOptions(
         enableVcpToolInjection: Boolean,
         enableAgentBubbleTheme: Boolean,
+        enableThoughtChainInjection: Boolean,
+        enableContextSanitizer: Boolean,
+        contextSanitizerDepth: Int,
         enableContextFolding: Boolean,
         contextFoldingKeepRecentMessages: Int,
         contextFoldingTriggerMessageCount: Int,
         contextFoldingTriggerCharCount: Int,
         contextFoldingExcerptCharLimit: Int,
         contextFoldingMaxSummaryEntries: Int,
+        topicSummaryModel: String,
     ) {
         state.value = state.value.copy(
             enableVcpToolInjection = enableVcpToolInjection,
             enableAgentBubbleTheme = enableAgentBubbleTheme,
+            enableThoughtChainInjection = enableThoughtChainInjection,
+            enableContextSanitizer = enableContextSanitizer,
+            contextSanitizerDepth = contextSanitizerDepth,
             enableContextFolding = enableContextFolding,
             contextFoldingKeepRecentMessages = contextFoldingKeepRecentMessages,
             contextFoldingTriggerMessageCount = contextFoldingTriggerMessageCount,
             contextFoldingTriggerCharCount = contextFoldingTriggerCharCount,
             contextFoldingExcerptCharLimit = contextFoldingExcerptCharLimit,
             contextFoldingMaxSummaryEntries = contextFoldingMaxSummaryEntries,
+            topicSummaryModel = topicSummaryModel,
         )
     }
 

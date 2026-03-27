@@ -225,7 +225,11 @@ class RoomWorkspaceRepository(
 
     override suspend fun saveAgent(agent: AgentEntity): AgentEntity {
         val savedAgent = agent.copy(updatedAt = System.currentTimeMillis())
-        agentDao.insert(savedAgent)
+        if (agentDao.findById(savedAgent.id) == null) {
+            agentDao.insert(savedAgent)
+        } else {
+            agentDao.update(savedAgent)
+        }
         syncCompatAgentSnapshot(savedAgent.id)
         return savedAgent
     }
