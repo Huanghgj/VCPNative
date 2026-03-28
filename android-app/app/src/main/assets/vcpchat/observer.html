@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<style>
+:root{
+  --bg:#000;--surface:rgba(28,28,30,0.8);--surface-solid:#1c1c1e;
+  --text:#e5e5e5;--text2:#8e8e93;--sep:rgba(84,84,88,0.36);
+  --blue:#0a84ff;--green:#30d158;--orange:#ff9f43;--red:#ff453a;
+  --purple:#bf5af2;--teal:#64d2ff;--pink:#ff375f;
+  --glass:rgba(44,44,46,0.6);
+}
+@media(prefers-color-scheme:light){:root{
+  --bg:#f2f2f7;--surface:rgba(255,255,255,0.8);--surface-solid:#fff;
+  --text:#1c1c1e;--text2:#8e8e93;--sep:rgba(60,60,67,0.12);
+  --glass:rgba(255,255,255,0.7);
+  --blue:#007aff;--green:#34c759;--orange:#ff9500;--red:#ff3b30;
+  --purple:#af52de;--teal:#5ac8fa;--pink:#ff2d55;
+}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,system-ui,sans-serif;
+  background:var(--bg);color:var(--text);
+  height:100vh;overflow:hidden;font-size:14px;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ── 容器 ─────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100%}
+
+/* 状态栏 */
+#status{
+  padding:10px 16px 6px;font-size:12px;color:var(--text2);
+  display:flex;align-items:center;gap:6px;flex-shrink:0;
+}
+#status .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-green{background:var(--green)}.dot-orange{background:var(--orange)}.dot-red{background:var(--red)}
+
+/* 筛选栏 */
+#filters{
+  display:flex;gap:6px;padding:6px 16px 10px;
+  overflow-x:auto;flex-shrink:0;
+  -webkit-overflow-scrolling:touch;
+}
+#filters::-webkit-scrollbar{display:none}
+.fbtn{
+  background:var(--glass);border:none;color:var(--text2);
+  padding:5px 12px;border-radius:16px;font-size:12px;
+  white-space:nowrap;cursor:pointer;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  transition:all .2s;flex-shrink:0;
+}
+.fbtn.active{background:var(--blue);color:#fff}
+
+/* 卡片列表 */
+#list{
+  flex:1;overflow-y:auto;padding:0 12px 20px;
+  -webkit-overflow-scrolling:touch;
+}
+#list::-webkit-scrollbar{width:2px}
+#list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:1px}
+
+/* 空状态 */
+.empty{text-align:center;color:var(--text2);margin-top:60px;font-size:13px;opacity:.5}
+
+/* ── 卡片 ─────────────────────────────── */
+.card{
+  background:var(--glass);
+  backdrop-filter:blur(16px) saturate(180%);
+  -webkit-backdrop-filter:blur(16px) saturate(180%);
+  border:1px solid var(--sep);
+  border-radius:14px;padding:14px;
+  margin-bottom:10px;position:relative;
+  overflow:hidden;
+  animation:cardIn .4s cubic-bezier(.2,1,.3,1) forwards;
+  opacity:0;transform:translateY(16px);
+}
+@keyframes cardIn{to{opacity:1;transform:none}}
+
+/* 左侧色条 */
+.card::before{content:'';position:absolute;top:0;left:0;bottom:0;width:3px;background:var(--accent,var(--blue));opacity:.7}
+.card.t-rag{--accent:var(--blue)}.card.t-chain{--accent:var(--purple)}
+.card.t-chat{--accent:var(--orange)}.card.t-memo{--accent:var(--teal)}
+.card.t-dream{--accent:var(--pink)}.card.t-note{--accent:var(--green)}
+.card.t-notif{--accent:var(--orange)}.card.t-approval{--accent:var(--orange)}
+
+/* 标题 */
+.card h3{font-size:14px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.card h3 .icon{font-size:16px}
+
+/* 元数据胶囊 */
+.meta{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.pill{
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.06);
+  padding:1px 7px;border-radius:5px;font-size:11px;
+  color:var(--text2);font-family:Menlo,monospace;
+}
+
+/* 分数 */
+.score{
+  display:inline-block;padding:1px 6px;border-radius:4px;
+  color:#fff;font-size:11px;font-weight:700;font-family:Menlo,monospace;
+}
+.score-h{background:var(--green)}.score-m{background:var(--orange)}.score-l{background:var(--red)}
+
+/* 内容 */
+.content{font-size:13px;line-height:1.55;color:var(--text);word-break:break-word}
+.content code{background:rgba(0,0,0,.2);padding:1px 4px;border-radius:3px;font-size:12px}
+.content pre{background:#1e1e2e;color:#cdd6f4;padding:10px;border-radius:8px;overflow-x:auto;font-size:12px;margin:6px 0}
+
+/* 可折叠 */
+.clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.expand-btn{
+  background:none;border:none;color:var(--blue);
+  font-size:12px;padding:4px 0;cursor:pointer;
+}
+
+/* 子结果 */
+.sub{
+  background:rgba(0,0,0,.12);border-radius:8px;
+  padding:10px;margin-top:6px;
+}
+.sub-header{display:flex;justify-content:space-between;margin-bottom:4px;font-size:12px}
+.sub-source{opacity:.5;font-size:11px}
+.tags{font-size:11px;color:var(--orange);opacity:.7;margin-top:3px}
+.core-tag{font-weight:700;color:var(--orange)}
+
+/* 审批 */
+.approval-btns{display:flex;gap:8px;margin-top:10px}
+.approval-btns button{
+  flex:1;padding:9px;border-radius:8px;border:none;
+  font-size:13px;font-weight:600;cursor:pointer;min-height:40px;
+}
+.btn-approve{background:var(--green);color:#fff}
+.btn-reject{background:var(--surface-solid);color:var(--text);border:1px solid var(--sep)}
+
+/* 阶段路径 */
+.path{font-size:12px;color:var(--purple);font-weight:600;margin-bottom:8px}
+.stage{border-left:2px solid var(--purple);padding-left:10px;margin-top:8px}
+.stage-title{font-weight:600;font-size:13px;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="status"><span class="dot dot-orange"></span><span id="statusText">等待连接...</span></div>
+  <div id="filters">
+    <button class="fbtn active" onclick="filter('all',this)">全部</button>
+    <button class="fbtn" onclick="filter('rag',this)">RAG</button>
+    <button class="fbtn" onclick="filter('chain',this)">思维链</button>
+    <button class="fbtn" onclick="filter('chat',this)">私聊</button>
+    <button class="fbtn" onclick="filter('memo',this)">记忆</button>
+    <button class="fbtn" onclick="filter('dream',this)">梦境</button>
+    <button class="fbtn" onclick="filter('notif',this)">通知</button>
+  </div>
+  <div id="list"><div class="empty">等待数据接入...</div></div>
+</div>
+
+<script>
+var L=document.getElementById('list'),curFilter='all',hasData=false;
+
+function updateStatus(status,msg){
+  var dot=document.querySelector('#status .dot');
+  var txt=document.getElementById('statusText');
+  dot.className='dot '+(status==='open'?'dot-green':status==='connecting'?'dot-orange':'dot-red');
+  txt.textContent=msg;
+}
+
+function filter(type,btn){
+  curFilter=type;
+  document.querySelectorAll('.fbtn').forEach(function(b){b.classList.remove('active')});
+  btn.classList.add('active');
+  L.querySelectorAll('.card').forEach(function(c){
+    c.style.display=(type==='all'||c.classList.contains('t-'+type))?'block':'none';
+  });
+}
+
+function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'):''}
+
+function clampHTML(text,maxLen){
+  if(!text)return '';
+  var safe=esc(text);
+  if(text.length<=maxLen)return '<div class="content">'+safe+'</div>';
+  return '<div class="content clamp" id="c'+Date.now()+'">'+safe+'</div>'+
+    '<button class="expand-btn" onclick="toggleClamp(this)">展开</button>';
+}
+
+function toggleClamp(btn){
+  var div=btn.previousElementSibling;
+  if(div.classList.contains('clamp')){div.classList.remove('clamp');btn.textContent='收起';}
+  else{div.classList.add('clamp');btn.textContent='展开';}
+}
+
+function scoreHTML(s){
+  if(typeof s!=='number')return '<span class="score score-m">Time</span>';
+  var cls=s>=0.8?'score-h':s>=0.5?'score-m':'score-l';
+  return '<span class="score '+cls+'">'+s.toFixed(3)+'</span>';
+}
+
+function addCard(html,typeClass){
+  if(!hasData){L.innerHTML='';hasData=true;}
+  var d=document.createElement('div');
+  d.className='card t-'+typeClass;
+  d.innerHTML=html;
+  L.prepend(d);
+  // 限制 DOM 大小
+  while(L.children.length>200)L.removeChild(L.lastChild);
+  // 筛选
+  if(curFilter!=='all'&&!d.classList.contains('t-'+curFilter))d.style.display='none';
+}
+
+// ── 各类型渲染 ───────────────────────────
+
+function displayRagInfo(data){
+  if(!data||!data.type)return;
+  var t=data.type;
+  if(t==='RAG_RETRIEVAL_DETAILS')return renderRAG(data);
+  if(t==='META_THINKING_CHAIN')return renderChain(data);
+  if(t==='AGENT_PRIVATE_CHAT_PREVIEW')return renderChat(data);
+  if(t==='AI_MEMO_RETRIEVAL')return renderMemo(data);
+  if(t==='DailyNote')return renderDailyNote(data);
+  if(t.startsWith('AGENT_DREAM_'))return renderDream(data);
+  if(t==='tool_approval_request')return renderApproval(data);
+  if(t==='vcp_log')return renderVcpLog(data);
+  renderGeneric(data);
+}
+
+function renderRAG(d){
+  var h='<h3><span class="icon">🔍</span>'+esc(d.dbName||'RAG')+'</h3>';
+  h+='<div class="meta">';
+  if(d.k)h+='<span class="pill">K:'+d.k+'</span>';
+  if(d.useTime)h+='<span class="pill">Time:'+d.useTime+'</span>';
+  if(d.useRerank)h+='<span class="pill">ReRank:'+d.useRerank+'</span>';
+  if(d.useTagMemo)h+='<span class="pill" style="color:var(--orange)">TagBoost:'+d.tagWeight+'</span>';
+  h+='</div>';
+  if(d.coreTags&&d.coreTags.length)h+='<div class="tags">核心标签: '+d.coreTags.map(function(t){return'<span class="core-tag">'+esc(t)+'</span>'}).join(' ')+'</div>';
+  if(d.query)h+=clampHTML(d.query,120);
+  if(d.results&&d.results.length){
+    d.results.forEach(function(r){
+      h+='<div class="sub"><div class="sub-header">'+scoreHTML(r.score)+'<span class="sub-source">'+esc(r.source||'')+'</span></div>';
+      h+=clampHTML(r.text||'',200);
+      if(r.matchedTags&&r.matchedTags.length){
+        var tags=r.matchedTags.map(function(t){
+          return(r.coreTagsMatched&&r.coreTagsMatched.indexOf(t)>=0)?'<span class="core-tag">'+esc(t)+'</span>':esc(t);
+        }).join(', ');
+        h+='<div class="tags">🏷️ '+tags+'</div>';
+      }
+      h+='</div>';
+    });
+  }
+  addCard(h,'rag');
+}
+
+function renderChain(d){
+  var path=d.stages?d.stages.map(function(s){return esc(s.clusterName)}).join(' → '):'';
+  var h='<h3><span class="icon">🧠</span>'+esc(d.chainName||'思维链')+'</h3>';
+  if(path)h+='<div class="path">'+path+'</div>';
+  if(d.query)h+=clampHTML(d.query,120);
+  if(d.stages){
+    d.stages.forEach(function(s){
+      h+='<div class="stage"><div class="stage-title">阶段 '+s.stage+': '+esc(s.clusterName)+' ('+s.resultCount+')</div>';
+      if(s.results){s.results.forEach(function(r){
+        h+='<div class="sub"><div class="sub-header">'+scoreHTML(r.score)+'<span class="sub-source">'+esc(r.source||'')+'</span></div>'+clampHTML(r.text||'',200)+'</div>';
+      });}
+      h+='</div>';
+    });
+  }
+  addCard(h,'chain');
+}
+
+function renderChat(d){
+  var h='<h3><span class="icon">💬</span>Agent: '+esc(d.agentName||'?')+'</h3>';
+  h+='<div style="opacity:.6;font-size:12px;margin-bottom:4px">USER</div>'+clampHTML(d.query||'',150);
+  h+='<div style="color:var(--orange);font-size:12px;margin:8px 0 4px">AI RESPONSE</div>'+clampHTML(d.response||'',300);
+  addCard(h,'chat');
+}
+
+function renderMemo(d){
+  var h='<h3><span class="icon">📝</span>记忆回溯 ('+(d.diaryCount||0)+')</h3>';
+  if(d.mode)h+='<div class="meta"><span class="pill">模式:'+esc(d.mode)+'</span></div>';
+  h+=clampHTML(d.extractedMemories||'',300);
+  addCard(h,'memo');
+}
+
+function renderDailyNote(d){
+  var isFull=d.action==='FullTextRecall';
+  var h='<h3><span class="icon">'+(isFull?'📄':'📌')+'</span>日记: '+esc(d.dbName||'')+'</h3>';
+  h+='<div class="meta"><span class="pill">'+(isFull?'全量召回':'直接引入')+'</span></div>';
+  h+='<div class="content" style="padding:8px;background:rgba(48,209,88,.08);border-radius:8px;border-left:3px solid var(--green)">'+esc(d.message||'')+'</div>';
+  addCard(h,'note');
+}
+
+function renderDream(d){
+  var h='<h3><span class="icon">🌙</span>'+esc(d.agentName||'')+' 梦境</h3>';
+  if(d.type==='AGENT_DREAM_ASSOCIATIONS'){
+    h+='<div class="meta"><span class="pill">种子:'+d.seedCount+'</span><span class="pill">联想:'+d.associationCount+'</span></div>';
+    if(d.seeds){d.seeds.forEach(function(s){h+='<div class="sub">'+esc(s.file)+': '+esc(s.snippet)+'</div>';});}
+  } else if(d.type==='AGENT_DREAM_NARRATIVE'){
+    h+=clampHTML(d.narrative||d.message||'',400);
+  } else {
+    h+='<div class="content">'+esc(d.message||d.error||JSON.stringify(d))+'</div>';
+  }
+  addCard(h,'dream');
+}
+
+function renderApproval(d){
+  var req=d.data||d;
+  var h='<h3><span class="icon">🛠️</span>审核: '+esc(req.toolName||'')+'</h3>';
+  h+='<div class="content">'+esc(req.maid||'')+' 请求调用 '+esc(req.toolName||'')+'</div>';
+  if(req.args)h+='<div class="content" style="font-size:12px;opacity:.7;margin-top:4px">'+esc(typeof req.args==='string'?req.args:JSON.stringify(req.args))+'</div>';
+  var rid=req.requestId||'';
+  h+='<div class="approval-btns"><button class="btn-approve" onclick="approve(\''+esc(rid)+'\',true,this)">✓ 允许</button><button class="btn-reject" onclick="approve(\''+esc(rid)+'\',false,this)">✕ 拒绝</button></div>';
+  addCard(h,'approval');
+}
+
+function renderVcpLog(d){
+  var data=d.data||d;
+  var tool=data.tool_name||'',status=data.status||'',content=data.content||'';
+  if(typeof content==='object')content=JSON.stringify(content,null,2);
+  var h='<h3><span class="icon">⚙️</span>'+esc(tool||'VCP Log')+'</h3>';
+  if(status)h+='<div class="meta"><span class="pill">'+esc(status)+'</span></div>';
+  h+=clampHTML(content,250);
+  addCard(h,'notif');
+}
+
+function renderGeneric(d){
+  var h='<h3><span class="icon">📋</span>'+esc(d.type||'Info')+'</h3>';
+  h+='<div class="content" style="font-size:12px">'+esc(d.message||JSON.stringify(d,null,2))+'</div>';
+  addCard(h,'notif');
+}
+
+function approve(rid,ok,btn){
+  if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
+    window.VcpChatBridge.onAction('approve',rid+'|'+(ok?'1':'0'));
+  }
+  btn.parentElement.innerHTML='<div style="text-align:center;color:var(--text2);font-size:13px">'+(ok?'✓ 已允许':'✕ 已拒绝')+'</div>';
+}
+
+// ── WebSocket 连接（由 Kotlin 注入配置后调用）────
+var ws1=null,ws2=null;
+window.connectObserver=function(wsUrl,key){
+  if(!wsUrl||!key){updateStatus('error','未配置');return;}
+  updateStatus('connecting','连接中...');
+  // VCPInfo 通道
+  try{
+    ws1=new WebSocket(wsUrl+'/vcpinfo/VCP_Key='+key);
+    ws1.onopen=function(){updateStatus('open','VCPInfo 已连接')};
+    ws1.onmessage=function(e){try{displayRagInfo(JSON.parse(e.data))}catch(x){}};
+    ws1.onclose=function(){updateStatus('error','VCPInfo 断开')};
+  }catch(e){updateStatus('error','连接失败')}
+  // VCPLog 通道
+  try{
+    ws2=new WebSocket(wsUrl+'/VCPlog/VCP_Key='+key);
+    ws2.onmessage=function(e){try{displayRagInfo(JSON.parse(e.data))}catch(x){}};
+  }catch(e){}
+};
+
+// Kotlin 在 onPageFinished 时调用 connectObserver(url, key)
+if(window.VcpChatBridge&&window.VcpChatBridge.onReady)window.VcpChatBridge.onReady();
+</script>
+</body>
+</html>

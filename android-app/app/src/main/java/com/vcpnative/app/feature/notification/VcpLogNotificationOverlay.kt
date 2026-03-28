@@ -744,7 +744,7 @@ private fun formatTime(millis: Long): String =
 
 private const val TOAST_DURATION_MS = 5000L
 private const val MAX_VISIBLE_TOASTS = 3
-private const val RAG_OBSERVER_URL = "file:///android_asset/vcpchat/modules/ragobserver/RAG_Observer.html"
+private const val RAG_OBSERVER_URL = "file:///android_asset/vcpchat/observer.html"
 
 /**
  * 嵌入式 RAG Observer WebView — 直接复用 VCPChat 桌面端的"灵视中心"。
@@ -759,7 +759,6 @@ private fun RagObserverWebView(
     val context = androidx.compose.ui.platform.LocalContext.current
     val webViewRef = remember { arrayOfNulls<WebView>(1) }
     var ready by remember { mutableStateOf(false) }
-    val pushedCount = remember { intArrayOf(0) }
 
     // 从 AppContainer 读取设置，传给 RAG Observer 的 URL 查询参数
     val app = context.applicationContext as com.vcpnative.app.VcpNativeApplication
@@ -767,11 +766,7 @@ private fun RagObserverWebView(
     val vcpLogUrl = appSettings?.vcpLogUrl ?: ""
     val vcpLogKey = appSettings?.vcpLogKey ?: ""
 
-    val shimJs = remember {
-        try {
-            context.assets.open("vcpchat/bridge-shim.js").bufferedReader().readText()
-        } catch (_: Exception) { "" }
-    }
+    // observer.html 是手机原生页面，不需要桌面 bridge shim
 
     // WebView 生命周期跟随面板可见性
     androidx.compose.runtime.DisposableEffect(Unit) {
@@ -782,7 +777,6 @@ private fun RagObserverWebView(
                 wv.destroy()
                 webViewRef[0] = null
                 ready = false
-                pushedCount[0] = 0
             }
         }
     }
@@ -812,109 +806,10 @@ private fun RagObserverWebView(
                 }
 
                 webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(
-                        view: WebView?,
-                        request: android.webkit.WebResourceRequest?,
-                    ): android.webkit.WebResourceResponse? {
-                        val url = request?.url?.toString() ?: return null
-                        if (url.endsWith(".html") && url.startsWith("file:///android_asset/")) {
-                            val assetPath = url.removePrefix("file:///android_asset/")
-                            try {
-                                val html = viewContext.assets.open(assetPath).bufferedReader().readText()
-                                val mobileAdapt = """
-<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'/>
-<script>
-$shimJs
-window.__vcpPlatform='android';
-</script>
-<style id='mobile-adapt'>
-/* 隐藏桌面标题栏和窗口控件 */
-#custom-title-bar,.window-controls,.window-controls-mac,.window-controls-win,
-#spectrum-canvas,.title-toolbar{display:none!important}
-/* 主容器适配手机 */
-.main-wrapper{max-width:100%!important;padding-top:0!important}
-.header-section{padding:8px 12px!important}
-/* 卡片适配 */
-.card-base{padding:14px!important;margin-bottom:12px!important;border-radius:12px!important}
-.card-base h3{font-size:0.95rem!important;gap:6px!important}
-.meta-info{gap:6px!important;font-size:0.75rem!important}
-.meta-pill{padding:1px 6px!important}
-/* 滚动容器 */
-#infoContainer{padding:0 10px 10px!important}
-/* 筛选栏适配 */
-.filter-bar{margin-bottom:8px!important;padding:3px!important;overflow-x:auto;flex-wrap:nowrap}
-.filter-btn{padding:5px 10px!important;font-size:0.78rem!important;white-space:nowrap}
-/* RAG 子项 */
-.rag-sub-item{padding:8px!important;margin-top:6px!important}
-.score-badge{font-size:0.72rem!important;padding:2px 6px!important}
-/* 文本内容 */
-.text-content{font-size:0.88rem!important;line-height:1.5!important}
-/* 操作按钮 - 更大的触摸目标 */
-.icon-btn{padding:8px!important;min-width:36px;min-height:36px}
-.approval-btn{padding:8px 16px!important;min-height:40px}
-.approval-actions{gap:8px!important}
-/* 核心标签 */
-.core-tag-pill{font-size:0.72rem!important;padding:1px 6px!important}
-.core-tags-container{gap:4px!important;margin-bottom:6px!important}
-/* 分数色标 */
-.score-high{background:#4caf50!important}.score-med{background:#ff9800!important}.score-low{background:#f44336!important}
-.score-badge{border-radius:4px;color:#fff;font-weight:600}
-/* 确保内容不溢出 */
-*{max-width:100%;box-sizing:border-box}
-img,svg,canvas{max-width:100%!important;height:auto}
-pre{overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0.8rem!important}
-/* 去掉桌面悬停效果（手机没有hover） */
-.card-base:hover{transform:none!important;box-shadow:var(--glass-shadow)!important}
-</style>
-"""
-                                val injected = if (html.contains("<head>", true)) {
-                                    html.replaceFirst(
-                                        Regex("<head>", RegexOption.IGNORE_CASE),
-                                        "<head>\n$mobileAdapt",
-                                    )
-                                } else html
-                                return android.webkit.WebResourceResponse(
-                                    "text/html", "utf-8",
-                                    java.io.ByteArrayInputStream(injected.toByteArray(Charsets.UTF_8)),
-                                )
-                            } catch (_: Exception) {}
-                        }
-                        return null
-                    }
-
                     override fun onPageFinished(view: WebView, url: String?) {
                         super.onPageFinished(view, url)
-                        // 通过 JS 直接注入配置并触发连接（不依赖 URL 参数）
-                        val wsBase = if (vcpLogUrl.startsWith("http")) {
-                            vcpLogUrl.replace("http://", "ws://").replace("https://", "wss://")
-                        } else if (vcpLogUrl.startsWith("ws")) vcpLogUrl
-                        else "ws://$vcpLogUrl"
-                        val safeUrl = wsBase.trimEnd('/').replace("'", "\\'")
-                        val safeKey = vcpLogKey.replace("'", "\\'")
-                        view.evaluateJavascript("""
-                            (function(){
-                                // 覆盖 URL 查询参数解析，直接注入配置
-                                var origSearch = window.location.search;
-                                var fakeParams = new URLSearchParams();
-                                fakeParams.set('vcpLogUrl', '$safeUrl');
-                                fakeParams.set('vcpLogKey', '$safeKey');
-                                // 劫持 URLSearchParams 构造函数让 config.js 读到正确值
-                                var OrigURLSearchParams = window.URLSearchParams;
-                                window.URLSearchParams = function(input) {
-                                    if (!input || input === origSearch) return fakeParams;
-                                    return new OrigURLSearchParams(input);
-                                };
-                                // 如果 config 已经初始化了，直接重连
-                                if (window.ragObserverConfig) {
-                                    window.ragObserverConfig.settings = {vcpLogUrl:'$safeUrl', vcpLogKey:'$safeKey'};
-                                    window.ragObserverConfig.isConnecting = false;
-                                    window.ragObserverConfig.autoConnect();
-                                }
-                            })();
-                        """.trimIndent(), null)
-                        android.util.Log.d("RagObserver", "Injected config: url=$safeUrl key=${safeKey.take(4)}...")
                         ready = true
-                        pushPendingMessages(view, notifications, pushedCount)
+                        connectObserverWebSocket(view, vcpLogUrl, vcpLogKey)
                     }
                 }
 
@@ -924,67 +819,24 @@ pre{overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0.8rem!important}
         },
     )
 
-    // settings 变化后重新注入配置（处理首次加载 settings 还是 null 的情况）
+    // settings 加载后连接（处理 settings 晚于 WebView 就绪的情况）
     LaunchedEffect(vcpLogUrl, vcpLogKey, ready) {
-        if (!ready || vcpLogUrl.isBlank() || vcpLogKey.isBlank()) return@LaunchedEffect
-        val wv = webViewRef[0] ?: return@LaunchedEffect
-        val wsBase = if (vcpLogUrl.startsWith("http")) {
-            vcpLogUrl.replace("http://", "ws://").replace("https://", "wss://")
-        } else if (vcpLogUrl.startsWith("ws")) vcpLogUrl
-        else "ws://$vcpLogUrl"
-        val safeUrl = wsBase.trimEnd('/').replace("'", "\\'")
-        val safeKey = vcpLogKey.replace("'", "\\'")
-        wv.evaluateJavascript("""
-            (function(){
-                if(window.ragObserverConfig){
-                    window.ragObserverConfig.settings={vcpLogUrl:'$safeUrl',vcpLogKey:'$safeKey'};
-                    window.ragObserverConfig.isConnecting=false;
-                    window.ragObserverConfig.autoConnect();
-                }
-            })();
-        """.trimIndent(), null)
-    }
-
-    // Push new messages as they arrive
-    LaunchedEffect(notifications.size, ready) {
         if (!ready) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
-        pushPendingMessages(wv, notifications, pushedCount)
+        connectObserverWebSocket(wv, vcpLogUrl, vcpLogKey)
     }
 }
 
-private fun pushPendingMessages(
-    webView: WebView,
-    notifications: List<VcpLogMessage>,
-    pushedCount: IntArray,
-) {
-    val start = pushedCount[0]
-    if (start >= notifications.size) return
-    for (i in start until notifications.size) {
-        val msg = notifications[i]
-        // Reconstruct the original WebSocket message format that RAG Observer expects
-        val json = org.json.JSONObject().apply {
-            put("type", msg.type)
-            if (msg.type == "vcp_log") {
-                put("data", org.json.JSONObject().apply {
-                    put("tool_name", msg.toolName ?: "")
-                    put("content", msg.content)
-                    put("MaidName", msg.maidName ?: "")
-                })
-            } else {
-                put("message", msg.content)
-                put("dbName", msg.toolName ?: "")
-            }
-        }
-        val b64 = android.util.Base64.encodeToString(
-            json.toString().toByteArray(Charsets.UTF_8),
-            android.util.Base64.NO_WRAP,
-        )
-        // Call displayRagInfo (the main entry point of RAG Observer)
-        webView.evaluateJavascript(
-            "(function(){try{var d=JSON.parse(atob('$b64'));if(typeof displayRagInfo==='function')displayRagInfo(d);else if(window.__vcpBridge)window.__vcpBridge.emit('vcp-log-message',JSON.stringify(d));}catch(e){console.error('Push failed:',e);}})();",
-            null,
-        )
-    }
-    pushedCount[0] = notifications.size
+/** 调用 observer.html 的 connectObserver(wsUrl, key) */
+private fun connectObserverWebSocket(webView: WebView, rawUrl: String, key: String) {
+    if (rawUrl.isBlank() || key.isBlank()) return
+    val wsUrl = when {
+        rawUrl.startsWith("http://") -> rawUrl.replace("http://", "ws://")
+        rawUrl.startsWith("https://") -> rawUrl.replace("https://", "wss://")
+        rawUrl.startsWith("ws") -> rawUrl
+        else -> "ws://$rawUrl"
+    }.trimEnd('/')
+    val safeUrl = wsUrl.replace("'", "\\'")
+    val safeKey = key.replace("'", "\\'")
+    webView.evaluateJavascript("if(window.connectObserver)connectObserver('$safeUrl','$safeKey');", null)
 }
