@@ -747,11 +747,14 @@ function wrapAsPreview(wrapper,htmlSource){
   var preview=document.createElement('div');
   preview.className='html-preview';
   preview.id=id;
-  // 保存源码供 iframe 使用
+  // 检测 HTML 完整性
+  var isComplete=/<\/html\s*>/i.test(htmlSource);
   preview.dataset.src=htmlSource;
+  preview.dataset.complete=isComplete?'1':'0';
   var bar=document.createElement('div');
   bar.className='html-preview-bar';
-  bar.innerHTML='<span>HTML 文档</span><button onclick="toggleHtmlPreview(\''+id+'\')">▶️ 运行</button>';
+  var label=isComplete?'HTML 文档':'HTML 文档 <span style="color:var(--orange);font-size:11px">（不完整）</span>';
+  bar.innerHTML='<span>'+label+'</span><button onclick="toggleHtmlPreview(\''+id+'\')">'+(isComplete?'▶️ 运行':'⚠️ 尝试运行')+'</button>';
   var iframe=document.createElement('iframe');
   iframe.sandbox='allow-scripts allow-same-origin';
   iframe.style.display='none';
