@@ -339,6 +339,23 @@ body{background:var(--bg);color:var(--text)}
 .html-render{border-radius:10px;overflow:hidden;margin:4px -4px}
 .html-render *{max-width:100%}
 
+/* ── HTML 预览（iframe）────────────────────────── */
+.html-preview{position:relative;margin:.5em 0;border-radius:10px;overflow:hidden;border:1px solid var(--sep)}
+.html-preview-bar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:6px 10px;background:var(--pre-header);font-size:12px;color:var(--pre-text);
+}
+.html-preview-bar button{
+  background:var(--user-bubble);color:#fff;border:none;
+  padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer;
+}
+.html-preview iframe{
+  width:100%;border:none;background:#fff;
+  min-height:300px;max-height:70vh;display:none;
+}
+.html-preview.active iframe{display:block}
+.html-preview.active .code-block{display:none}
+
 /* ── 图片查看器覆盖层 ─────────────────────────── */
 #imgViewer{
   position:fixed;top:0;left:0;right:0;bottom:0;
@@ -425,10 +442,20 @@ function sanitize(html){
 function md(text){
   if(!text)return '';
   var h=esc(text);
-  // 代码块 → 带语言标签
+  // 代码块 → 带语言标签；HTML 完整文档 → 可预览
   h=h.replace(/```(\w*)\n([\s\S]*?)```/g,function(_,lang,code){
+    var trimmed=code.trim();
+    // 检测完整 HTML 文档 — 提供"运行"预览
+    if((lang==='html'||lang==='')&&/<!DOCTYPE\s+html|<html[\s>]/i.test(trimmed)){
+      var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
+      return '<div class="html-preview" id="'+id+'">'+
+        '<div class="html-preview-bar"><span>HTML 文档</span>'+
+        '<button onclick="toggleHtmlPreview(\''+id+'\')">▶️ 运行</button></div>'+
+        '<div class="code-block"><pre><code>'+trimmed+'</code></pre></div>'+
+        '<iframe sandbox="allow-scripts allow-same-origin"></iframe></div>';
+    }
     var header=lang?'<div class="code-header"><span>'+lang+'</span><span class="copy-btn" onclick="copyCode(this)">复制</span></div>':'';
-    return '<div class="code-block">'+header+'<pre><code>'+code.trim()+'</code></pre></div>';
+    return '<div class="code-block">'+header+'<pre><code>'+trimmed+'</code></pre></div>';
   });
   h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>');
   h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
@@ -621,6 +648,34 @@ window.vcpChat={
   },
   scrollToBottom:function(){autoScroll=true;toBottom(true)},
   setTheme:function(dark){document.documentElement.style.colorScheme=dark?'dark':'light'}
+};
+
+// ── HTML 预览切换 ───────────────────────────────
+window.toggleHtmlPreview=function(id){
+  var container=document.getElementById(id);
+  if(!container)return;
+  var isActive=container.classList.contains('active');
+  var btn=container.querySelector('.html-preview-bar button');
+  var iframe=container.querySelector('iframe');
+  if(isActive){
+    container.classList.remove('active');
+    iframe.srcdoc='';
+    btn.textContent='▶️ 运行';
+  } else {
+    var code=container.querySelector('code');
+    if(code){
+      iframe.srcdoc=code.textContent;
+      // 自适应高度
+      iframe.onload=function(){
+        try{
+          var h=iframe.contentDocument.documentElement.scrollHeight;
+          iframe.style.height=Math.min(Math.max(h,200),window.innerHeight*0.7)+'px';
+        }catch(e){iframe.style.height='400px'}
+      };
+    }
+    container.classList.add('active');
+    btn.textContent='🔙 代码';
+  }
 };
 
 // ── AI 按钮交互（window.input 函数）─────────────
