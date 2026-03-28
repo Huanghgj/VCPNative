@@ -282,8 +282,56 @@ fun VcpLogSidebarPanel(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
 
+            // 分栏筛选
+            var selectedTab by remember { mutableStateOf("all") }
+            val tabs = listOf(
+                "all" to "全部",
+                "tool" to "工具调用",
+                "approval" to "审批",
+                "note" to "日记",
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                tabs.forEach { (id, label) ->
+                    val selected = selectedTab == id
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                else Color.Transparent
+                            )
+                            .clickable { selectedTab = id }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selected) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+
+            val filtered = remember(notifications.size, selectedTab) {
+                when (selectedTab) {
+                    "tool" -> notifications.filter {
+                        it.type == "vcp_log" && it.toolName != null
+                    }
+                    "approval" -> notifications.filter { it.isApprovalRequest }
+                    "note" -> notifications.filter { it.type == "daily_note_created" }
+                    else -> notifications.toList()
+                }
+            }
+
             // 通知列表
-            if (notifications.isEmpty()) {
+            if (filtered.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -297,11 +345,11 @@ fun VcpLogSidebarPanel(
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     items(
-                        items = notifications.asReversed(),
+                        items = filtered.asReversed(),
                         key = { it.timestamp },
                     ) { msg ->
                         NotificationRow(
