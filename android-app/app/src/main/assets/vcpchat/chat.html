@@ -782,6 +782,16 @@ window.copyImageUrl=function(){
   closeImgViewer();
 };
 
+// ── Base64 UTF-8 解码（atob 只支持 Latin1，这里处理中文等多字节字符）
+window.b64d=function(b64){
+  try{
+    var bin=atob(b64);
+    var bytes=new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }catch(e){return atob(b64)}
+};
+
 if(window.VcpChatBridge&&window.VcpChatBridge.onReady)window.VcpChatBridge.onReady();
 })();
 </script>

@@ -3,6 +3,7 @@ package com.vcpnative.app.feature.chat
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.Context
+import android.util.Base64
 import android.net.Uri
 import android.os.Environment
 import android.view.View
@@ -205,6 +206,10 @@ fun ChatWebView(
     }
 }
 
+/** Encode string to Base64 for safe JS transport (avoids all escaping issues). */
+private fun toBase64(text: String): String =
+    Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+
 /** Load all messages at once (initial load / topic switch). */
 private fun loadAllMessages(
     webView: WebView,
@@ -222,8 +227,12 @@ private fun loadAllMessages(
         })
         sentIds.add(msg.id)
     }
-    val escaped = escapeForJs(jsonArray.toString())
-    webView.evaluateJavascript("vcpChat.clearChat();vcpChat.loadHistory('$escaped');", null)
+    // 用 Base64 传输 JSON，彻底避免引号/换行/特殊字符转义问题
+    val b64 = toBase64(jsonArray.toString())
+    webView.evaluateJavascript(
+        "vcpChat.clearChat();vcpChat.loadHistory(b64d('$b64'));",
+        null,
+    )
     BridgeLogger.d(TAG, "Loaded ${messages.size} messages")
 }
 
@@ -234,16 +243,16 @@ private fun syncMessages(
     sentIds: MutableSet<String>,
 ) {
     for (msg in messages) {
-        val escapedContent = escapeForJs(msg.content)
+        val b64Content = toBase64(msg.content)
         if (msg.id !in sentIds) {
             webView.evaluateJavascript(
-                "vcpChat.addMessage('${msg.id}','${msg.role}','$escapedContent','${msg.status}');",
+                "vcpChat.addMessage('${msg.id}','${msg.role}',b64d('$b64Content'),'${msg.status}');",
                 null,
             )
             sentIds.add(msg.id)
         } else {
             webView.evaluateJavascript(
-                "vcpChat.updateMessage('${msg.id}','$escapedContent','${msg.status}');",
+                "vcpChat.updateMessage('${msg.id}',b64d('$b64Content'),'${msg.status}');",
                 null,
             )
         }
@@ -257,11 +266,3 @@ private fun syncMessages(
         sentIds.remove(id)
     }
 }
-
-/** Escape content for safe embedding in JS string literals. */
-private fun escapeForJs(text: String): String =
-    text.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "")
-        .replace("</script>", "<\\/script>")
