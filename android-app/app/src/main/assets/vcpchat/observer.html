@@ -179,16 +179,34 @@ function esc(s){return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 
 function clampHTML(text,maxLen){
   if(!text)return '';
-  var safe=esc(text);
-  if(text.length<=maxLen)return '<div class="content">'+safe+'</div>';
-  return '<div class="content clamp" id="c'+Date.now()+'">'+safe+'</div>'+
-    '<button class="expand-btn" onclick="toggleClamp(this)">展开</button>';
+  var isLong=text.length>maxLen;
+  // 短内容直接显示全文，长内容折叠
+  if(!isLong)return '<div class="content">'+esc(text)+'</div>';
+  return '<div class="content clamp">'+esc(text)+'</div>'+
+    '<div class="content full-text" style="display:none">'+esc(text)+'</div>'+
+    '<div style="display:flex;gap:6px;margin-top:4px">'+
+      '<button class="expand-btn" onclick="toggleClamp(this)">展开全文</button>'+
+      '<button class="expand-btn" onclick="copyText(this)" data-text="'+encodeURIComponent(text)+'">复制</button>'+
+    '</div>';
+}
+
+function copyText(btn){
+  var text=decodeURIComponent(btn.getAttribute('data-text'));
+  navigator.clipboard.writeText(text).then(function(){
+    btn.textContent='已复制';setTimeout(function(){btn.textContent='复制'},1500);
+  });
 }
 
 function toggleClamp(btn){
-  var div=btn.previousElementSibling;
-  if(div.classList.contains('clamp')){div.classList.remove('clamp');btn.textContent='收起';}
-  else{div.classList.add('clamp');btn.textContent='展开';}
+  var container=btn.parentElement.parentElement;
+  var clamped=container.querySelector('.clamp');
+  var full=container.querySelector('.full-text');
+  if(!clamped||!full)return;
+  if(full.style.display==='block'){
+    full.style.display='none';clamped.style.display='-webkit-box';btn.textContent='展开全文';
+  } else {
+    full.style.display='block';clamped.style.display='none';btn.textContent='收起';
+  }
 }
 
 function scoreHTML(s){
@@ -203,9 +221,7 @@ function addCard(html,typeClass){
   d.className='card t-'+typeClass;
   d.innerHTML=html;
   L.prepend(d);
-  // 限制 DOM 大小
   while(L.children.length>200)L.removeChild(L.lastChild);
-  // 筛选
   if(curFilter!=='all'&&!d.classList.contains('t-'+curFilter))d.style.display='none';
 }
 
