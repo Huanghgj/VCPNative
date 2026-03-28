@@ -407,6 +407,13 @@ var RE={
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
+// 清理危险标签（防 XSS）
+function sanitize(html){
+  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'')
+    .replace(/on\w+\s*=\s*["'][^"']*["']/gi,'')
+    .replace(/javascript\s*:/gi,'blocked:');
+}
+
 // ── Markdown 渲染 ──────────────────────────────
 function md(text){
   if(!text)return '';
@@ -532,7 +539,7 @@ function renderContent(content,role){
   var processed=processSpecial(content,role);
   // 检测是否包含原始 HTML
   if(/<(?:div|style|svg|canvas|iframe|table|script|html|head|body)\b/i.test(processed)){
-    return '<div class="html-render">'+processed+'</div>';
+    return '<div class="html-render">'+sanitize(processed)+'</div>';
   }
   // 检测是否已被特殊处理器转换（包含我们的组件class）
   if(/<div class="(?:tool-|thought|diary|role-div|btn-click)/.test(processed)){
@@ -669,7 +676,7 @@ window.editMessage=function(msgId){
 window.vcpChat.openEditor=function(msgId,rawContent){
   if(editOverlay){editOverlay.remove();}
   editOverlay=document.createElement('div');
-  editOverlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;padding:12px;';
+  editOverlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;padding:12px;padding-top:calc(env(safe-area-inset-top,0px) + 12px);padding-bottom:calc(env(safe-area-inset-bottom,0px) + 12px);';
   editOverlay.innerHTML=
     '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'+
       '<span style="font-size:15px;font-weight:600;">编辑消息</span>'+
@@ -692,11 +699,12 @@ window.saveEdit=function(msgId){
   var ta=document.getElementById('editArea');
   if(!ta)return;
   var newContent=ta.value;
+  // Base64 编码内容避免分隔符冲突
+  var b64=btoa(unescape(encodeURIComponent(newContent)));
   if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
-    window.VcpChatBridge.onAction('saveEdit',msgId+'|||'+newContent);
+    window.VcpChatBridge.onAction('saveEdit',msgId+'|||'+b64);
   }
   cancelEdit();
-  // 本地立即更新显示
   vcpChat.updateMessage(msgId,newContent,'complete');
 };
 
@@ -803,14 +811,18 @@ function showCtxMenu(msgEl,touch){
       addSep();
     }
 
-    // 删除消息
+    // 删除消息（带确认）
     addItem('🗑️','删除消息','danger',function(){
-      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',id);
+      if(confirm('确定要删除这条消息吗？')){
+        if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',id);
+      }
     });
   }
 
-  // 定位菜单
+  // 定位菜单（适配刘海/安全区域）
   var x=touch.clientX,y=touch.clientY;
+  var safeTop=parseInt(getComputedStyle(document.documentElement).getPropertyValue('env(safe-area-inset-top)'))||0;
+  var safeLeft=parseInt(getComputedStyle(document.documentElement).getPropertyValue('env(safe-area-inset-left)'))||0;
   ctxMenu.style.left='0';ctxMenu.style.top='0';
   ctxMenu.classList.add('active');
   ctxOverlay.classList.add('active');
@@ -818,7 +830,8 @@ function showCtxMenu(msgEl,touch){
   var vw=window.innerWidth,vh=window.innerHeight;
   if(x+mw>vw)x=vw-mw-8;
   if(y+mh>vh)y=vh-mh-8;
-  if(x<8)x=8;if(y<8)y=8;
+  if(x<safeLeft+8)x=safeLeft+8;
+  if(y<safeTop+8)y=safeTop+8;
   ctxMenu.style.left=x+'px';ctxMenu.style.top=y+'px';
 }
 

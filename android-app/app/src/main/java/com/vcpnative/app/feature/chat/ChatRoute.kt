@@ -900,11 +900,14 @@ private fun ChatScreen(
                         onSendMessage(value)
                     }
                     "saveEdit" -> {
-                        // 编辑保存：value = "messageId|||newContent"
+                        // 编辑保存：value = "messageId|||base64Content"
                         val parts = value.split("|||", limit = 2)
                         if (parts.size == 2) {
+                            val decoded = try {
+                                String(android.util.Base64.decode(parts[1], android.util.Base64.DEFAULT), Charsets.UTF_8)
+                            } catch (_: Exception) { parts[1] }
                             scope.launch {
-                                onEditAssistantMessage(parts[0], parts[1])
+                                onEditAssistantMessage(parts[0], decoded)
                             }
                         }
                     }
