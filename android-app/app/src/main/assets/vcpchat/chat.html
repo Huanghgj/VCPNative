@@ -298,6 +298,36 @@ body{background:var(--bg);color:var(--text)}
   font-size:13px;font-weight:500;margin:2px 0;
 }
 
+/* ── 长按菜单 ──────────────────────────────────── */
+#ctxMenu{
+  position:fixed;z-index:9998;
+  background:var(--surface);
+  border-radius:14px;padding:6px 0;
+  min-width:180px;
+  box-shadow:0 8px 30px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.08);
+  display:none;overflow:hidden;
+  animation:menuIn .15s ease-out;
+}
+#ctxMenu.active{display:block}
+@keyframes menuIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
+.ctx-item{
+  padding:11px 16px;font-size:14px;
+  display:flex;align-items:center;gap:10px;
+  color:var(--text);cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+.ctx-item:active{background:var(--code-bg)}
+.ctx-item.danger{color:#ff3b30}
+.ctx-sep{height:.5px;background:var(--sep);margin:4px 12px}
+.ctx-icon{width:18px;text-align:center;font-size:15px;opacity:.7}
+
+/* ── 遮罩 ──────────────────────────────────────── */
+#ctxOverlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  z-index:9997;display:none;
+}
+#ctxOverlay.active{display:block}
+
 /* ── HTML 渲染块 ───────────────────────────────── */
 .html-render{border-radius:10px;overflow:hidden;margin:4px -4px}
 .html-render *{max-width:100%}
@@ -341,6 +371,10 @@ body{background:var(--bg);color:var(--text)}
 </head>
 <body>
 <div id="c"></div>
+
+<!-- 长按上下文菜单 -->
+<div id="ctxOverlay"></div>
+<div id="ctxMenu"></div>
 
 <!-- 图片查看器 -->
 <div id="imgViewer">
@@ -574,6 +608,128 @@ window.vcpChat={
   scrollToBottom:function(){autoScroll=true;toBottom(true)},
   setTheme:function(dark){document.documentElement.style.colorScheme=dark?'dark':'light'}
 };
+
+// ── 长按上下文菜单 ──────────────────────────────
+var ctxMenu=document.getElementById('ctxMenu');
+var ctxOverlay=document.getElementById('ctxOverlay');
+var longPressTimer=null;
+var longPressTarget=null;
+
+function closeCtx(){
+  ctxMenu.classList.remove('active');
+  ctxOverlay.classList.remove('active');
+  longPressTarget=null;
+}
+ctxOverlay.addEventListener('click',closeCtx);
+ctxOverlay.addEventListener('touchstart',closeCtx);
+
+// 找到消息气泡
+function findMsgBubble(el){
+  while(el&&el!==C){
+    if(el.classList&&el.classList.contains('m'))return el;
+    el=el.parentElement;
+  }
+  return null;
+}
+
+// 长按检测
+C.addEventListener('touchstart',function(e){
+  var target=e.target;
+  // 忽略图片（图片有自己的点击查看器）
+  if(target.tagName==='IMG')return;
+  var msgEl=findMsgBubble(target);
+  if(!msgEl)return;
+  longPressTimer=setTimeout(function(){
+    longPressTimer=null;
+    showCtxMenu(msgEl,e.touches[0]);
+  },500);
+},{passive:true});
+
+C.addEventListener('touchend',function(){
+  if(longPressTimer){clearTimeout(longPressTimer);longPressTimer=null}
+},{passive:true});
+C.addEventListener('touchmove',function(){
+  if(longPressTimer){clearTimeout(longPressTimer);longPressTimer=null}
+},{passive:true});
+
+function showCtxMenu(msgEl,touch){
+  var id=msgEl.dataset.id;
+  var role=msgEl.dataset.role;
+  var isStreaming=msgEl.classList.contains('streaming');
+
+  ctxMenu.innerHTML='';
+
+  function addItem(icon,label,cls,fn){
+    var d=document.createElement('div');
+    d.className='ctx-item'+(cls?' '+cls:'');
+    d.innerHTML='<span class="ctx-icon">'+icon+'</span>'+label;
+    d.onclick=function(){closeCtx();fn()};
+    ctxMenu.appendChild(d);
+  }
+  function addSep(){
+    var d=document.createElement('div');d.className='ctx-sep';
+    ctxMenu.appendChild(d);
+  }
+
+  if(isStreaming){
+    addItem('⏹','中止回复','danger',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('interrupt',id);
+    });
+  } else {
+    // 复制文本
+    addItem('📋','复制文本','',function(){
+      var bubble=msgEl.querySelector('.b');
+      if(bubble){
+        var text=bubble.innerText.replace(/\n{3,}/g,'\n\n').trim();
+        if(navigator.clipboard){
+          navigator.clipboard.writeText(text);
+        } else if(window.VcpChatBridge){
+          window.VcpChatBridge.onAction('copy',text);
+        }
+      }
+    });
+
+    // 复制原文（Markdown）
+    addItem('📄','复制原文','',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('copyRaw',id);
+    });
+
+    addSep();
+
+    if(role==='assistant'){
+      // 重新回复
+      addItem('🔄','重新回复','',function(){
+        if(window.VcpChatBridge)window.VcpChatBridge.onAction('retry',id);
+      });
+      // 编辑消息
+      addItem('✏️','编辑消息','',function(){
+        if(window.VcpChatBridge)window.VcpChatBridge.onAction('edit',id);
+      });
+      // 创建分支
+      addItem('🔀','创建分支','',function(){
+        if(window.VcpChatBridge)window.VcpChatBridge.onAction('branch',id);
+      });
+      addSep();
+    }
+
+    // 删除消息
+    addItem('🗑️','删除消息','danger',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',id);
+    });
+  }
+
+  // 定位菜单
+  var x=touch.clientX,y=touch.clientY;
+  ctxMenu.style.left='0';ctxMenu.style.top='0';
+  ctxMenu.classList.add('active');
+  ctxOverlay.classList.add('active');
+  var mw=ctxMenu.offsetWidth,mh=ctxMenu.offsetHeight;
+  var vw=window.innerWidth,vh=window.innerHeight;
+  if(x+mw>vw)x=vw-mw-8;
+  if(y+mh>vh)y=vh-mh-8;
+  if(x<8)x=8;if(y<8)y=8;
+  ctxMenu.style.left=x+'px';ctxMenu.style.top=y+'px';
+}
 
 // ── 图片查看器 ──────────────────────────────────
 var viewer=document.getElementById('imgViewer');

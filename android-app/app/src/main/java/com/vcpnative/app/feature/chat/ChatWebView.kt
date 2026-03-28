@@ -46,6 +46,7 @@ private const val CHAT_HTML_URL = "file:///android_asset/vcpchat/chat.html"
 @Composable
 fun ChatWebView(
     messages: List<MessageEntity>,
+    onAction: (action: String, messageId: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -53,8 +54,9 @@ fun ChatWebView(
     val webViewRef = remember { arrayOfNulls<WebView>(1) }
     val sentIds = remember { mutableSetOf<String>() }
     var webViewReady by remember { mutableStateOf(false) }
-    // Always have a fresh reference to current messages
+    // Always have fresh references
     val currentMessages by rememberUpdatedState(messages)
+    val currentOnAction by rememberUpdatedState(onAction)
 
     DisposableEffect(Unit) {
         onDispose {
@@ -106,6 +108,30 @@ fun ChatWebView(
                     @JavascriptInterface
                     fun onLongPress(messageId: String) {
                         BridgeLogger.d(TAG, "Long press: $messageId")
+                    }
+
+                    @JavascriptInterface
+                    fun onAction(action: String, value: String) {
+                        BridgeLogger.d(TAG, "Action: $action ($value)")
+                        when (action) {
+                            "copy" -> {
+                                // Copy rendered text to clipboard
+                                scope.launch(Dispatchers.Main) {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                        as android.content.ClipboardManager
+                                    cm.setPrimaryClip(
+                                        android.content.ClipData.newPlainText("chat", value)
+                                    )
+                                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            else -> {
+                                // Delegate to Compose callback
+                                scope.launch(Dispatchers.Main) {
+                                    currentOnAction(action, value)
+                                }
+                            }
+                        }
                     }
 
                     @JavascriptInterface

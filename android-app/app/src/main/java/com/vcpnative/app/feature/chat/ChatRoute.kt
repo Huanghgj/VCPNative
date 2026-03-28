@@ -783,6 +783,8 @@ private fun ChatScreen(
     onRemovePendingAttachment: (String) -> Unit,
     onOpenAttachment: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val bubbleSpeechController = rememberBubbleSpeechController()
     var composerFocused by remember { mutableStateOf(false) }
     ChatPerformanceMetricsState(isSending = isSending)
@@ -877,9 +879,34 @@ private fun ChatScreen(
             )
         },
     ) { innerPadding ->
-        // 单 WebView 渲染所有消息 — 替代之前的 LazyColumn + 逐条 WebView
+        // 单 WebView 渲染所有消息
         ChatWebView(
             messages = messages,
+            onAction = { action, value ->
+                when (action) {
+                    "copyRaw" -> {
+                        // 复制原文
+                        val msg = messages.find { it.id == value }
+                        if (msg != null) {
+                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("raw", msg.content))
+                            android.widget.Toast.makeText(context, "已复制原文", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    "retry" -> onRetryAssistantMessage(value)
+                    "interrupt" -> onInterruptAssistantMessage(value)
+                    "edit" -> {
+                        // TODO: 打开编辑对话框
+                    }
+                    "branch" -> {
+                        scope.launch { onCreateBranchFromMessage(value) }
+                    }
+                    "delete" -> {
+                        scope.launch { onDeleteAssistantMessage(value) }
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
