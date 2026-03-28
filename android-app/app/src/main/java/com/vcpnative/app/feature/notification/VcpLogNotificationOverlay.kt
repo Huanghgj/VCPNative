@@ -286,6 +286,7 @@ fun VcpLogSidebarPanel(
             var selectedTab by remember { mutableStateOf("all") }
             val tabs = listOf(
                 "all" to "全部",
+                "rag" to "RAG 召回",
                 "tool" to "工具调用",
                 "approval" to "审批",
                 "note" to "日记",
@@ -321,11 +322,16 @@ fun VcpLogSidebarPanel(
 
             val filtered = remember(notifications.size, selectedTab) {
                 when (selectedTab) {
+                    "rag" -> notifications.filter {
+                        it.type == "RAG_RETRIEVAL_DETAILS" || it.type == "DailyNote"
+                    }
                     "tool" -> notifications.filter {
                         it.type == "vcp_log" && it.toolName != null
                     }
                     "approval" -> notifications.filter { it.isApprovalRequest }
-                    "note" -> notifications.filter { it.type == "daily_note_created" }
+                    "note" -> notifications.filter {
+                        it.type == "daily_note_created" || it.type == "DailyNote"
+                    }
                     else -> notifications.toList()
                 }
             }
@@ -382,7 +388,13 @@ private fun NotificationRow(
     when (message.type) {
         "tool_approval_request" -> ApprovalCard(message, onApprove, onReject, cardMod)
         "daily_note_created" -> DailyNoteCard(message, cardMod)
-        "video_generation_status" -> GenericCard(message, cardMod, icon = "🎬", accentColor = Color(0xFF5856D6))
+        "DailyNote" -> DailyNoteCard(message, cardMod)
+        "RAG_RETRIEVAL_DETAILS" -> GenericCard(message, cardMod, icon = "🔍", accentColor = Color(0xFF5856D6))
+        "video_generation_status" -> GenericCard(message, cardMod, icon = "🎬", accentColor = Color(0xFFFF9500))
+        "warning" -> GenericCard(message, cardMod, icon = "⚠️", accentColor = Color(0xFFFF9500))
+        "error" -> GenericCard(message, cardMod, icon = "❌", accentColor = MaterialTheme.colorScheme.error)
+        "success" -> GenericCard(message, cardMod, icon = "✅", accentColor = Color(0xFF34C759))
+        "info" -> GenericCard(message, cardMod, icon = "ℹ️", accentColor = MaterialTheme.colorScheme.primary)
         else -> ToolLogCard(message, cardMod)
     }
 }

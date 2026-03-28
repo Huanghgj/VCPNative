@@ -206,6 +206,9 @@ class VcpLogClient(
                 "tool_approval_request" -> parseApprovalRequest(json)
                 "daily_note_created" -> parseDailyNote(json)
                 "video_generation_status" -> parseVideoStatus(json)
+                "RAG_RETRIEVAL_DETAILS" -> parseRagRetrieval(json)
+                "DailyNote" -> parseDailyNoteAction(json)
+                "warning", "info", "error", "success" -> parseStatusMessage(json, type)
                 else -> parseGeneric(json, type)
             }
 
@@ -299,6 +302,79 @@ class VcpLogClient(
             type = "video_generation_status",
             title = "Video Generation",
             content = message.ifBlank { "视频生成状态更新" },
+        )
+    }
+
+    /** RAG 召回详情（VCPInfo 通道） */
+    private fun parseRagRetrieval(json: JSONObject): VcpLogMessage {
+        val dbName = json.optString("dbName", "")
+        val k = json.optInt("k", 0)
+        val threshold = json.optDouble("threshold", 0.0)
+        val results = json.optJSONArray("results")
+        val resultCount = results?.length() ?: 0
+
+        val content = buildString {
+            append("数据库: $dbName\n")
+            append("召回 $resultCount 条 (k=$k, 阈值=${"%.2f".format(threshold)})\n")
+            if (results != null) {
+                for (i in 0 until minOf(resultCount, 5)) {
+                    val r = results.optJSONObject(i) ?: continue
+                    val name = r.optString("name", "?")
+                    val score = r.optDouble("score", 0.0)
+                    val preview = r.optString("preview", "").take(80)
+                    append("\n[${"%.2f".format(score)}] $name")
+                    if (preview.isNotBlank()) append("\n  $preview")
+                }
+                if (resultCount > 5) append("\n... 还有 ${resultCount - 5} 条")
+            }
+        }
+
+        return VcpLogMessage(
+            type = "RAG_RETRIEVAL_DETAILS",
+            title = "RAG 召回 · $dbName",
+            content = content,
+            toolName = "RAG",
+        )
+    }
+
+    /** DailyNote 动作（VCPInfo 通道：FullTextRecall / DirectRecall 等） */
+    private fun parseDailyNoteAction(json: JSONObject): VcpLogMessage {
+        val action = json.optString("action", "")
+        val dbName = json.optString("dbName", "")
+        val message = json.optString("message", "")
+
+        val title = when (action) {
+            "FullTextRecall" -> "日记全文召回 · $dbName"
+            "DirectRecall" -> "日记直接引入 · $dbName"
+            else -> "日记 · $action · $dbName"
+        }
+
+        return VcpLogMessage(
+            type = "DailyNote",
+            title = title,
+            content = message.ifBlank { "$action on $dbName" },
+            toolName = "DailyNote",
+        )
+    }
+
+    /** 状态消息（warning/info/error/success） */
+    private fun parseStatusMessage(json: JSONObject, type: String): VcpLogMessage {
+        val source = json.optString("source", "")
+        val message = json.optString("message", "")
+
+        return VcpLogMessage(
+            type = type,
+            title = buildString {
+                when (type) {
+                    "warning" -> append("⚠️ 警告")
+                    "error" -> append("❌ 错误")
+                    "success" -> append("✅ 成功")
+                    else -> append("ℹ️ 信息")
+                }
+                if (source.isNotBlank()) append(" · $source")
+            },
+            content = message.ifBlank { json.toString() },
+            toolName = source.ifBlank { null },
         )
     }
 
