@@ -657,15 +657,18 @@ window.toggleHtmlPreview=function(id){
   var isActive=container.classList.contains('active');
   var btn=container.querySelector('.html-preview-bar button');
   var iframe=container.querySelector('iframe');
+  var codeBlock=container.querySelector('.code-block')||container.querySelector('pre');
   if(isActive){
     container.classList.remove('active');
-    iframe.srcdoc='';
+    iframe.srcdoc='';iframe.style.display='none';
+    if(codeBlock)codeBlock.style.display='';
     btn.textContent='▶️ 运行';
   } else {
     var code=container.querySelector('code');
     if(code){
       iframe.srcdoc=code.textContent;
-      // 自适应高度
+      iframe.style.display='block';
+      if(codeBlock)codeBlock.style.display='none';
       iframe.onload=function(){
         try{
           var h=iframe.contentDocument.documentElement.scrollHeight;
@@ -708,21 +711,53 @@ function processButtons(container){
   });
 }
 
-// 每次消息渲染后处理按钮
+// 后处理：扫描 DOM 中的完整 HTML 文档并添加预览按钮
+function processHtmlPreviews(container){
+  // 找所有 <code> 块，检测里面是否有完整 HTML
+  var codes=container.querySelectorAll('code:not([data-preview-checked])');
+  codes.forEach(function(code){
+    code.setAttribute('data-preview-checked','1');
+    var text=code.textContent||'';
+    if(!/<!DOCTYPE\s+html|<html[\s>]/i.test(text))return;
+    if(text.length<50)return; // 太短的忽略
+    // 找到包含这个 code 的 pre 或 code-block
+    var wrapper=code.closest('.code-block')||code.closest('pre');
+    if(!wrapper||wrapper.querySelector('.html-preview-bar'))return;
+    // 包装成预览容器
+    var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
+    var preview=document.createElement('div');
+    preview.className='html-preview';
+    preview.id=id;
+    // 创建工具栏
+    var bar=document.createElement('div');
+    bar.className='html-preview-bar';
+    bar.innerHTML='<span>HTML 文档</span><button onclick="toggleHtmlPreview(\''+id+'\')">▶️ 运行</button>';
+    // 创建 iframe
+    var iframe=document.createElement('iframe');
+    iframe.sandbox='allow-scripts allow-same-origin';
+    // 替换原始元素
+    wrapper.parentNode.insertBefore(preview,wrapper);
+    preview.appendChild(bar);
+    preview.appendChild(wrapper);
+    preview.appendChild(iframe);
+  });
+}
+
+// 每次消息渲染后处理按钮 + HTML 预览
 var _origAdd=window.vcpChat.addMessage;
 window.vcpChat.addMessage=function(id,role,content,status){
   _origAdd.call(this,id,role,content,status);
-  var el=MM[id];if(el)processButtons(el);
+  var el=MM[id];if(el){processButtons(el);processHtmlPreviews(el)}
 };
 var _origUpdate=window.vcpChat.updateMessage;
 window.vcpChat.updateMessage=function(id,content,status){
   _origUpdate.call(this,id,content,status);
-  var el=MM[id];if(el)processButtons(el);
+  var el=MM[id];if(el){processButtons(el);processHtmlPreviews(el)}
 };
 var _origHistory=window.vcpChat.loadHistory;
 window.vcpChat.loadHistory=function(json){
   _origHistory.call(this,json);
-  processButtons(C);
+  processButtons(C);processHtmlPreviews(C);
 };
 
 // ── 消息编辑功能 ─────────────────────────────────
