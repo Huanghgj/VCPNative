@@ -317,7 +317,7 @@ fun VcpLogSidebarPanel(
 }
 
 /**
- * 单条通知 — 紧凑行布局（类似 iOS 通知列表）。
+ * 单条通知 — 按类型差异化渲染。
  */
 @Composable
 private fun NotificationRow(
@@ -325,14 +325,25 @@ private fun NotificationRow(
     onApprove: (String) -> Unit,
     onReject: (String) -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(12.dp),
-    ) {
-        // 第一行：标题 + 时间
+    val cardMod = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(10.dp))
+        .background(MaterialTheme.colorScheme.surface)
+        .padding(12.dp)
+
+    when (message.type) {
+        "tool_approval_request" -> ApprovalCard(message, onApprove, onReject, cardMod)
+        "daily_note_created" -> DailyNoteCard(message, cardMod)
+        "video_generation_status" -> GenericCard(message, cardMod, icon = "🎬", accentColor = Color(0xFF5856D6))
+        else -> ToolLogCard(message, cardMod)
+    }
+}
+
+/** 工具执行日志（最常见类型）— 显示工具名、状态、Agent、内容摘要 */
+@Composable
+private fun ToolLogCard(message: VcpLogMessage, modifier: Modifier) {
+    Column(modifier = modifier) {
+        // 标题行
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -343,31 +354,31 @@ private fun NotificationRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 类型指示
+                // 状态点：成功=绿、失败=红、其他=蓝
                 val dotColor = when {
-                    message.isApprovalRequest -> Color(0xFFFF9500)
-                    message.type == "vcp_log" -> MaterialTheme.colorScheme.primary
-                    message.type == "daily_note_created" -> Color(0xFF34C759)
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    message.title.contains("error", ignoreCase = true) -> MaterialTheme.colorScheme.error
+                    message.title.contains("success", ignoreCase = true) -> Color(0xFF34C759)
+                    else -> MaterialTheme.colorScheme.primary
                 }
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(dotColor),
-                )
-                Text(
-                    text = message.title,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                message.maidName?.let { agent ->
+                Box(Modifier.size(6.dp).clip(CircleShape).background(dotColor))
+
+                // 工具名
+                message.toolName?.let {
                     Text(
-                        text = agent,
-                        style = MaterialTheme.typography.labelSmall,
+                        text = it,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Agent 名
+                message.maidName?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                     )
                 }
@@ -375,46 +386,218 @@ private fun NotificationRow(
             Text(
                 text = formatTime(message.timestamp),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             )
         }
 
-        // 内容 — 紧凑，最多 4 行
+        // 状态标签（如果标题里有状态信息且不是纯工具名）
+        if (message.toolName != null && message.title != message.toolName) {
+            val statusText = message.title
+                .replace(message.toolName ?: "", "")
+                .replace(message.maidName ?: "", "")
+                .replace("·", "").trim()
+            if (statusText.isNotBlank()) {
+                Text(
+                    text = statusText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (statusText.contains("error", true)) MaterialTheme.colorScheme.error
+                            else Color(0xFF34C759),
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+
+        // 内容摘要
         if (message.content.isNotBlank()) {
             Text(
                 text = message.content.take(300),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/** 🛠️ 工具审批请求 — 醒目的橙色边框 + 审批按钮 */
+@Composable
+private fun ApprovalCard(
+    message: VcpLogMessage,
+    onApprove: (String) -> Unit,
+    onReject: (String) -> Unit,
+    modifier: Modifier,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .then(Modifier.padding(1.dp)) // border trick
+            .clip(RoundedCornerShape(9.dp))
+            .background(Color(0xFFFF9500).copy(alpha = 0.06f))
+            .padding(12.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("🛠️", fontSize = 14.sp)
+            Text(
+                text = "审核请求",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFFFF9500),
+            )
+            message.toolName?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = formatTime(message.timestamp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            )
+        }
+
+        // 详情
+        if (message.content.isNotBlank()) {
+            Text(
+                text = message.content.take(400),
+                style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
                 ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 8,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+
+        // 审批按钮
+        if (message.requestId != null) {
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = { onApprove(message.requestId) },
+                    modifier = Modifier.weight(1f).height(34.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759)),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("✓ 允许", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                OutlinedButton(
+                    onClick = { onReject(message.requestId) },
+                    modifier = Modifier.weight(1f).height(34.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("✕ 拒绝", fontSize = 13.sp) }
+            }
+        }
+    }
+}
+
+/** ✒️ 日记创建通知 — 温暖的样式 */
+@Composable
+private fun DailyNoteCard(message: VcpLogMessage, modifier: Modifier) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF34C759).copy(alpha = 0.06f))
+            .padding(12.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("✒️", fontSize = 14.sp)
+            Text(
+                text = "日记",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF34C759),
+            )
+            message.maidName?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = formatTime(message.timestamp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            )
+        }
+        if (message.content.isNotBlank()) {
+            Text(
+                text = message.content,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+    }
+}
 
-        // 审批按钮
-        if (message.isApprovalRequest && message.requestId != null) {
-            Row(
-                modifier = Modifier.padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Button(
-                    onClick = { onApprove(message.requestId) },
-                    modifier = Modifier.weight(1f).height(30.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759)),
-                    shape = RoundedCornerShape(6.dp),
-                    contentPadding = PaddingValues(0.dp),
-                ) { Text("允许", fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
-                OutlinedButton(
-                    onClick = { onReject(message.requestId) },
-                    modifier = Modifier.weight(1f).height(30.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    contentPadding = PaddingValues(0.dp),
-                ) { Text("拒绝", fontSize = 12.sp) }
-            }
+/** 通用类型卡片（视频生成等） */
+@Composable
+private fun GenericCard(
+    message: VcpLogMessage,
+    modifier: Modifier,
+    icon: String = "📋",
+    accentColor: Color = MaterialTheme.colorScheme.primary,
+) {
+    Column(modifier = modifier) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(icon, fontSize = 14.sp)
+            Text(
+                text = message.title,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = accentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = formatTime(message.timestamp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            )
+        }
+        if (message.content.isNotBlank()) {
+            Text(
+                text = message.content.take(300),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }
