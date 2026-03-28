@@ -1,0 +1,87 @@
+/*
+ * Mobile overrides for VCPChat desktop modules.
+ * Injected by VcpModuleHost into every module WebView.
+ */
+
+/* Ensure proper mobile viewport behavior */
+html {
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
+}
+
+body {
+    /* Desktop modules often have fixed widths or min-widths */
+    min-width: unset !important;
+    max-width: 100vw !important;
+    overflow-x: hidden;
+    /* Safe area insets for notch/navigation bar */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Desktop title bars (custom window chrome) — hide on mobile */
+.title-bar,
+.titlebar,
+.window-controls,
+.traffic-lights,
+.drag-region,
+#titleBar,
+.title-bar-container {
+    display: none !important;
+}
+
+/* Desktop sidebars that are too wide for mobile */
+.sidebar,
+.side-panel {
+    max-width: 280px;
+}
+
+/* Tables: horizontal scroll instead of overflow */
+table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Code blocks: scroll instead of breaking layout */
+pre, code {
+    max-width: 100%;
+    overflow-x: auto;
+    word-break: break-all;
+}
+
+/* Images: constrain to viewport */
+img, video, canvas, svg {
+    max-width: 100% !important;
+    height: auto;
+}
+
+/* Fix input fields that might have fixed desktop widths */
+input, textarea, select {
+    max-width: 100% !important;
+    box-sizing: border-box;
+}
+
+/* Modal dialogs: full-width on mobile */
+.modal-content,
+.dialog-content {
+    width: calc(100vw - 32px) !important;
+    max-width: calc(100vw - 32px) !important;
+    margin: 16px auto !important;
+}
+
+/* Touch targets: minimum 44px */
+button, .btn, [role="button"],
+.clickable, .interactive {
+    min-height: 44px;
+    min-width: 44px;
+}
+
+/* Scrollbar: hide on mobile (use touch scrolling) */
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.3);
+    border-radius: 2px;
+}

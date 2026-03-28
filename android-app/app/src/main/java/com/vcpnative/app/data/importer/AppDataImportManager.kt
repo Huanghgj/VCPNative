@@ -352,6 +352,8 @@ class AppDataImportManager(
             settings = ImportedSettings(
                 serverUrl = settingsJson.optString("vcpServerUrl"),
                 apiKey = settingsJson.optString("vcpApiKey"),
+                vcpLogUrl = settingsJson.optString("vcpLogUrl"),
+                vcpLogKey = settingsJson.optString("vcpLogKey"),
                 enableVcpToolInjection = settingsJson.optBoolean("enableVcpToolInjection", false),
                 enableAgentBubbleTheme = settingsJson.optBoolean("enableAgentBubbleTheme", false),
                 enableThoughtChainInjection = settingsJson.optBoolean("enableThoughtChainInjection", false),
@@ -545,6 +547,8 @@ class AppDataImportManager(
         settingsRepository.saveConnection(
             serverUrl = parsed.settings.serverUrl,
             apiKey = parsed.settings.apiKey,
+            vcpLogUrl = parsed.settings.vcpLogUrl,
+            vcpLogKey = parsed.settings.vcpLogKey,
         )
         settingsRepository.saveCompilerOptions(
             enableVcpToolInjection = parsed.settings.enableVcpToolInjection,
@@ -1069,6 +1073,8 @@ class AppDataImportManager(
     private data class ImportedSettings(
         val serverUrl: String,
         val apiKey: String,
+        val vcpLogUrl: String = "",
+        val vcpLogKey: String = "",
         val enableVcpToolInjection: Boolean,
         val enableAgentBubbleTheme: Boolean,
         val enableThoughtChainInjection: Boolean,

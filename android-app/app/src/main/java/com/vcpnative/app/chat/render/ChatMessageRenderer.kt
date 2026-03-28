@@ -4616,7 +4616,7 @@ private fun buildBrowserHtmlDocument(
                     margin: 0;
                     padding: 0;
                     background: transparent;
-                    overflow-x: hidden;
+                    overflow: hidden;
                 }
                 * {
                     box-sizing: border-box;
@@ -4713,15 +4713,15 @@ private fun buildBrowserHtmlDocument(
                     }
 
                     function readHeight() {
-                        var root = document.documentElement;
                         var body = document.body;
+                        // Only use body-based measurements — document.documentElement
+                        // (root) clientHeight/offsetHeight/scrollHeight reflect the
+                        // WebView viewport size, not the content size.  Including them
+                        // creates a feedback loop: container grows → viewport grows →
+                        // readHeight reports larger value → container grows again.
                         return Math.ceil(Math.max(
                             body ? body.scrollHeight : 0,
                             body ? body.offsetHeight : 0,
-                            body ? body.clientHeight : 0,
-                            root ? root.scrollHeight : 0,
-                            root ? root.offsetHeight : 0,
-                            root ? root.clientHeight : 0,
                             measureDeepestContentBottom()
                         ));
                     }

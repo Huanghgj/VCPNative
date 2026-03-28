@@ -76,6 +76,8 @@ import kotlinx.coroutines.withContext
 data class SettingsUiState(
     val serverUrl: String = "",
     val apiKey: String = "",
+    val vcpLogUrl: String = "",
+    val vcpLogKey: String = "",
     val enableVcpToolInjection: Boolean = false,
     val enableAgentBubbleTheme: Boolean = false,
     val enableThoughtChainInjection: Boolean = false,
@@ -122,6 +124,8 @@ class SettingsViewModel(
             _uiState.value = _uiState.value.copy(
                 serverUrl = settings.vcpServerUrl,
                 apiKey = settings.vcpApiKey,
+                vcpLogUrl = settings.vcpLogUrl,
+                vcpLogKey = settings.vcpLogKey,
                 enableVcpToolInjection = settings.enableVcpToolInjection,
                 enableAgentBubbleTheme = settings.enableAgentBubbleTheme,
                 enableThoughtChainInjection = settings.enableThoughtChainInjection,
@@ -147,6 +151,14 @@ class SettingsViewModel(
 
     fun updateApiKey(value: String) {
         _uiState.value = _uiState.value.copy(apiKey = value)
+    }
+
+    fun updateVcpLogUrl(value: String) {
+        _uiState.value = _uiState.value.copy(vcpLogUrl = value)
+    }
+
+    fun updateVcpLogKey(value: String) {
+        _uiState.value = _uiState.value.copy(vcpLogKey = value)
     }
 
     fun updateEnableVcpToolInjection(value: Boolean) {
@@ -266,6 +278,8 @@ class SettingsViewModel(
             settingsRepository.saveConnection(
                 serverUrl = snapshot.serverUrl,
                 apiKey = snapshot.apiKey,
+                vcpLogUrl = snapshot.vcpLogUrl,
+                vcpLogKey = snapshot.vcpLogKey,
             )
             settingsRepository.saveCompilerOptions(
                 enableVcpToolInjection = snapshot.enableVcpToolInjection,
@@ -365,6 +379,8 @@ fun SettingsRoute(
         onNavigateBack = onNavigateBack,
         onServerUrlChange = viewModel::updateServerUrl,
         onApiKeyChange = viewModel::updateApiKey,
+        onVcpLogUrlChange = viewModel::updateVcpLogUrl,
+        onVcpLogKeyChange = viewModel::updateVcpLogKey,
         onEnableVcpToolInjectionChange = viewModel::updateEnableVcpToolInjection,
         onEnableAgentBubbleThemeChange = viewModel::updateEnableAgentBubbleTheme,
         onEnableThoughtChainInjectionChange = viewModel::updateEnableThoughtChainInjection,
@@ -417,6 +433,8 @@ private fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onServerUrlChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
+    onVcpLogUrlChange: (String) -> Unit,
+    onVcpLogKeyChange: (String) -> Unit,
     onEnableVcpToolInjectionChange: (Boolean) -> Unit,
     onEnableAgentBubbleThemeChange: (Boolean) -> Unit,
     onEnableThoughtChainInjectionChange: (Boolean) -> Unit,
@@ -514,6 +532,29 @@ private fun SettingsScreen(
                         .fillMaxWidth()
                         .semantics { contentDescription = "settings_api_key_field" },
                     label = { Text(text = "VCP API Key") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+            }
+
+            AnimeSettingsCard(
+                title = "信息广播",
+                subtitle = "通过 WebSocket 接收 VCP 服务器的实时通知和工具执行日志。"
+            ) {
+                OutlinedTextField(
+                    value = uiState.vcpLogUrl,
+                    onValueChange = onVcpLogUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(text = "VCP WebSocket URL") },
+                    placeholder = { Text(text = "ws://127.0.0.1:5890") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium
+                )
+                OutlinedTextField(
+                    value = uiState.vcpLogKey,
+                    onValueChange = onVcpLogKeyChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(text = "VCP WebSocket Key") },
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium
                 )

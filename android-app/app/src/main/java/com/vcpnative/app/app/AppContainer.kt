@@ -23,6 +23,7 @@ import com.vcpnative.app.network.vcp.NetworkBackedVcpModelCatalog
 import com.vcpnative.app.network.vcp.VcpModelCatalog
 import com.vcpnative.app.network.vcp.boundedVcpHttpClient
 import com.vcpnative.app.network.vcp.defaultVcpHttpClient
+import com.vcpnative.app.network.vcplog.VcpLogClient
 import okhttp3.OkHttpClient
 
 class AppContainer(
@@ -112,6 +113,10 @@ class AppContainer(
             workspaceRepository = workspaceRepository,
             okHttpClient = boundedHttpClient,
         )
+    }
+
+    val vcpLogClient: VcpLogClient by lazy {
+        VcpLogClient(okHttpClient = okHttpClient)
     }
 
     val okHttpClient: OkHttpClient by lazy {

@@ -19,8 +19,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -74,6 +76,7 @@ fun AgentsRoute(
     onOpenSettings: () -> Unit,
     onOpenAgentEditor: (agentId: String) -> Unit,
     onOpenTopics: (agentId: String) -> Unit,
+    onOpenModule: (moduleId: String) -> Unit = {},
 ) {
     val agents by appContainer.workspaceRepository
         .observeAgents()
@@ -86,6 +89,7 @@ fun AgentsRoute(
         onOpenSettings = onOpenSettings,
         onOpenAgentEditor = onOpenAgentEditor,
         onOpenTopics = onOpenTopics,
+        onOpenModule = onOpenModule,
         onCreatePlaceholder = {
             scope.launch {
                 val agent = appContainer.workspaceRepository.createPlaceholderAgent()
@@ -113,6 +117,7 @@ private fun AgentsScreen(
     onOpenSettings: () -> Unit,
     onOpenAgentEditor: (agentId: String) -> Unit,
     onOpenTopics: (agentId: String) -> Unit,
+    onOpenModule: (moduleId: String) -> Unit = {},
     onCreatePlaceholder: () -> Unit,
     onDeleteAgent: (agentId: String) -> Unit,
 ) {
@@ -228,6 +233,32 @@ private fun AgentsScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                // VCPChat modules quick-access row
+                item(key = "__modules_row") {
+                    val moduleButtons = listOf(
+                        "notes" to "Notes",
+                        "memo" to "Memo",
+                        "forum" to "Forum",
+                        "canvas" to "Canvas",
+                        "translator" to "Translator",
+                        "dice" to "Dice",
+                        "themes" to "Themes",
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        moduleButtons.forEach { (id, label) ->
+                            androidx.compose.material3.AssistChip(
+                                onClick = { onOpenModule(id) },
+                                label = { Text(label, fontSize = 13.sp) },
+                            )
+                        }
+                    }
+                }
+
                 items(agents, key = { it.id }) { agent ->
                     Box {
                         Card(

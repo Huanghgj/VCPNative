@@ -14,10 +14,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,8 +36,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -104,7 +105,9 @@ import com.vcpnative.app.chat.compiler.ChatRequestCompiler
 import com.vcpnative.app.chat.render.ChatMessageReaderContent
 import com.vcpnative.app.chat.render.ChatMessageContent
 import com.vcpnative.app.chat.render.ChatRenderMode
+import com.vcpnative.app.app.LocalVcpLogNotification
 import com.vcpnative.app.chat.render.LocalImageViewerCallback
+import com.vcpnative.app.feature.notification.VcpLogNotificationBell
 import com.vcpnative.app.chat.render.shouldUseBrowserHtmlRenderer
 import com.vcpnative.app.chat.summary.TopicSummarizer
 import com.vcpnative.app.chat.session.StreamSessionManager
@@ -121,6 +124,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.Locale
@@ -666,6 +670,8 @@ fun ChatRoute(
     onOpenTopic: (String) -> Unit,
     onOpenAgentEditor: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenModule: (moduleId: String) -> Unit = {},
+    onOpenDebugLog: () -> Unit = {},
     onOpenAttachment: (String) -> Unit,
     onOpenImageViewer: (imageUrl: String, alt: String?) -> Unit = { _, _ -> },
 ) {
@@ -729,6 +735,8 @@ fun ChatRoute(
             },
             onOpenAgentEditor = onOpenAgentEditor,
             onOpenSettings = onOpenSettings,
+            onOpenModule = onOpenModule,
+            onOpenDebugLog = onOpenDebugLog,
             onSendMessage = viewModel::sendMessage,
             onRetryAssistantMessage = viewModel::regenerateAssistantMessage,
             onEditAssistantMessage = viewModel::editAssistantMessage,
@@ -762,6 +770,8 @@ private fun ChatScreen(
     onCreateTopic: () -> Unit,
     onOpenAgentEditor: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenModule: (moduleId: String) -> Unit = {},
+    onOpenDebugLog: () -> Unit = {},
     onSendMessage: (String) -> Unit,
     onRetryAssistantMessage: (String) -> Unit,
     onEditAssistantMessage: suspend (String, String) -> Result<Unit>,
@@ -773,72 +783,29 @@ private fun ChatScreen(
     onRemovePendingAttachment: (String) -> Unit,
     onOpenAttachment: (String) -> Unit,
 ) {
-    val scrollState = rememberScrollState()
     val bubbleSpeechController = rememberBubbleSpeechController()
-    var autoFollowBottom by rememberSaveable { mutableStateOf(true) }
     var composerFocused by remember { mutableStateOf(false) }
     ChatPerformanceMetricsState(isSending = isSending)
-    val latestCompletedAssistantMessageId = remember(messages) {
-        messages.lastOrNull { it.role == "assistant" && it.status !in setOf("draft", "streaming") }?.id
-    }
-    val isNearBottom by remember(scrollState) {
-        derivedStateOf {
-            val max = scrollState.maxValue
-            max == 0 || (max - scrollState.value) < 300
-        }
-    }
-
-    // 跟踪用户手动滚动
-    LaunchedEffect(scrollState) {
-        snapshotFlow { scrollState.isScrollInProgress to isNearBottom }
-            .collect { (scrolling, nearBottom) ->
-                when {
-                    scrolling -> autoFollowBottom = nearBottom
-                    nearBottom -> autoFollowBottom = true
-                }
-            }
-    }
-
-    // 自动跟随到底部
-    LaunchedEffect(messages.size, messages.lastOrNull()?.status, messages.lastOrNull()?.id) {
-        if (messages.isEmpty() || !autoFollowBottom || composerFocused) {
-            return@LaunchedEffect
-        }
-        val lastMessage = messages.last()
-        if (lastMessage.status in setOf("draft", "streaming")) {
-            scrollState.scrollTo(scrollState.maxValue)
-        } else {
-            if (scrollState.maxValue > scrollState.value) {
-                scrollState.animateScrollTo(scrollState.maxValue)
-            }
-        }
-    }
 
     Scaffold(
         topBar = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.secondary
-                            )
-                        )
-                    )
+            // 毛玻璃风格顶栏 — 半透明 surface + 底部分割线
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                tonalElevation = 0.dp,
             ) {
                 TopAppBar(
                     title = {
                         Column {
                             Text(
                                 text = title,
-                                fontWeight = FontWeight.Black,
+                                style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
                                 text = subtitle,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     },
@@ -851,36 +818,41 @@ private fun ChatScreen(
                         }
                     },
                     actions = {
-                        TextButton(onClick = onOpenTopics) {
-                            Text(
-                                text = "话题",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
-                        TextButton(onClick = onCreateTopic) {
-                            Text(
-                                text = "新建",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
-                        IconButton(onClick = onOpenAgentEditor) {
-                            Icon(
-                                imageVector = Icons.Outlined.Edit,
-                                contentDescription = "编辑 Agent",
-                            )
-                        }
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(
-                                imageVector = Icons.Outlined.Settings,
-                                contentDescription = "设置",
-                            )
+                        // 更多操作 — 收纳进一个菜单，保持顶栏干净
+                        var menuExpanded by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.AutoAwesome,
+                                    contentDescription = "更多",
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = menuExpanded,
+                                onDismissRequest = { menuExpanded = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("话题列表") },
+                                    onClick = { menuExpanded = false; onOpenTopics() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("新建话题") },
+                                    onClick = { menuExpanded = false; onCreateTopic() },
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("编辑 Agent") },
+                                    onClick = { menuExpanded = false; onOpenAgentEditor() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("设置") },
+                                    onClick = { menuExpanded = false; onOpenSettings() },
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
-                        titleContentColor = MaterialTheme.colorScheme.onPrimary,
-                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-                        navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
                 )
             }
@@ -898,76 +870,14 @@ private fun ChatScreen(
             )
         },
     ) { innerPadding ->
-        if (messages.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(100.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.AutoAwesome,
-                        contentDescription = null,
-                        modifier = Modifier.size(52.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = "准备好了吗~",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "在下方输入你的消息，\n开始对话吧~",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .verticalScroll(scrollState)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                messages.forEach { message ->
-                    key(message.id) {
-                        MessageBubble(
-                            message = message,
-                            attachments = attachmentsByMessageId[message.id].orEmpty(),
-                            canRegenerateAssistant = !isSending && message.id == latestCompletedAssistantMessageId,
-                            isSending = isSending,
-                            pauseDynamicContent = false,
-                            onSendMessage = onSendMessage,
-                            onRetryAssistantMessage = onRetryAssistantMessage,
-                            onEditAssistantMessage = onEditAssistantMessage,
-                            onDeleteAssistantMessage = onDeleteAssistantMessage,
-                            onCreateBranchFromMessage = onCreateBranchFromMessage,
-                            onSpeakAssistantMessage = bubbleSpeechController::speak,
-                            onInterruptAssistantMessage = onInterruptAssistantMessage,
-                            onOpenTopics = onOpenTopics,
-                            onCreateTopic = onCreateTopic,
-                            onOpenAttachment = onOpenAttachment,
-                        )
-                    }
-                }
-            }
-        }
+        // 单 WebView 渲染所有消息 — 替代之前的 LazyColumn + 逐条 WebView
+        ChatWebView(
+            messages = messages,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .background(MaterialTheme.colorScheme.background),
+        )
     }
 }
 
@@ -1055,7 +965,7 @@ private fun ChatComposerBar(
                     .onFocusChanged { focusState ->
                         onFocusChanged(focusState.isFocused)
                     },
-                placeholder = { Text(text = "说点什么吧～") },
+                placeholder = { Text(text = "输入消息...") },
                 enabled = !isSending,
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp),
@@ -1130,16 +1040,21 @@ private fun MessageBubble(
     val backgroundColor = when {
         message.status == "error" -> MaterialTheme.colorScheme.errorContainer
         message.status == "interrupted" -> MaterialTheme.colorScheme.tertiaryContainer
-        message.role == "user" -> MaterialTheme.colorScheme.primaryContainer
-        message.role == "assistant" -> MaterialTheme.colorScheme.surfaceVariant
+        message.role == "user" -> MaterialTheme.colorScheme.primary
+        message.role == "assistant" -> MaterialTheme.colorScheme.surfaceContainerHigh
         else -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    val contentColor = when {
+        message.status == "error" -> MaterialTheme.colorScheme.onErrorContainer
+        message.role == "user" -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurface
     }
     val alignment = if (message.role == "user") Alignment.CenterEnd else Alignment.CenterStart
     val label = remember(message.role) {
         when (message.role) {
-            "user" -> "You"
-            "assistant" -> "Assistant"
-            else -> "System"
+            "user" -> "我"
+            "assistant" -> "助手"
+            else -> "系统"
         }
     }
     val displayContent = remember(message.content, message.role, message.status) {
@@ -1155,31 +1070,32 @@ private fun MessageBubble(
         message.role != "user" && shouldUseBrowserHtmlRenderer(displayContent)
     }
     val bubbleFillFraction = when {
-        message.role == "user" -> 0.82f
-        isBrowserHtmlMessage -> 0.96f
-        else -> 0.9f
+        message.role == "user" -> 0.78f
+        isBrowserHtmlMessage -> 0.95f
+        else -> 0.88f
     }
     val bubbleBorderColor = when {
-        isBrowserHtmlMessage -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.48f)
-        message.role == "assistant" -> MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+        isBrowserHtmlMessage -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
         else -> Color.Transparent
     }
     val bubbleBackgroundColor = if (isBrowserHtmlMessage) {
-        MaterialTheme.colorScheme.surface.copy(alpha = 0.52f)
+        MaterialTheme.colorScheme.surface
     } else {
         backgroundColor
     }
     val bubblePadding = if (isBrowserHtmlMessage) {
-        PaddingValues(horizontal = 10.dp, vertical = 10.dp)
+        PaddingValues(horizontal = 12.dp, vertical = 10.dp)
     } else {
-        PaddingValues(16.dp)
+        PaddingValues(horizontal = 14.dp, vertical = 10.dp)
     }
+    // iMessage 风格：对方左下小圆角，自己右下小圆角
     val bubbleShape = when {
-        message.role == "user" -> RoundedCornerShape(24.dp, 24.dp, 6.dp, 24.dp)
-        isBrowserHtmlMessage -> RoundedCornerShape(24.dp)
-        else -> RoundedCornerShape(24.dp, 24.dp, 24.dp, 6.dp)
+        message.role == "user" -> RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp)
+        isBrowserHtmlMessage -> RoundedCornerShape(20.dp)
+        else -> RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp)
     }
-    val showRoleLabel = !(message.role == "assistant" && isBrowserHtmlMessage)
+    // 只给 assistant 和 system 显示角色标签，用户消息不显示（像 iMessage）
+    val showRoleLabel = message.role != "user" && !(message.role == "assistant" && isBrowserHtmlMessage)
     val isStreamingMessage = isStreamingMessage(message)
     val canShowAssistantMenu = message.role == "assistant" && displayContent.isNotBlank()
     val canEditAssistant = message.role == "assistant" && !isSending && !isStreamingMessage

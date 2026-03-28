@@ -3,6 +3,8 @@ package com.vcpnative.app.model
 data class AppSettings(
     val vcpServerUrl: String = "",
     val vcpApiKey: String = "",
+    val vcpLogUrl: String = "",
+    val vcpLogKey: String = "",
     val enableVcpToolInjection: Boolean = false,
     val enableAgentBubbleTheme: Boolean = false,
     val enableThoughtChainInjection: Boolean = false,

@@ -24,7 +24,7 @@ interface SettingsRepository {
 
     suspend fun currentSettings(): AppSettings
 
-    suspend fun saveConnection(serverUrl: String, apiKey: String)
+    suspend fun saveConnection(serverUrl: String, apiKey: String, vcpLogUrl: String, vcpLogKey: String)
 
     suspend fun saveCompilerOptions(
         enableVcpToolInjection: Boolean,
@@ -55,10 +55,12 @@ class DataStoreSettingsRepository(
 
     override suspend fun currentSettings(): AppSettings = settings.first()
 
-    override suspend fun saveConnection(serverUrl: String, apiKey: String) {
+    override suspend fun saveConnection(serverUrl: String, apiKey: String, vcpLogUrl: String, vcpLogKey: String) {
         context.appSettingsDataStore.edit { preferences ->
             preferences[Keys.VCP_SERVER_URL] = serverUrl.trim()
             preferences[Keys.VCP_API_KEY] = apiKey.trim()
+            preferences[Keys.VCP_LOG_URL] = vcpLogUrl.trim()
+            preferences[Keys.VCP_LOG_KEY] = vcpLogKey.trim()
         }
         syncCompatSettings(currentSettings())
     }
@@ -126,6 +128,8 @@ class DataStoreSettingsRepository(
     private fun Preferences.toAppSettings(): AppSettings = AppSettings(
         vcpServerUrl = this[Keys.VCP_SERVER_URL].orEmpty(),
         vcpApiKey = this[Keys.VCP_API_KEY].orEmpty(),
+        vcpLogUrl = this[Keys.VCP_LOG_URL].orEmpty(),
+        vcpLogKey = this[Keys.VCP_LOG_KEY].orEmpty(),
         enableVcpToolInjection = this[Keys.ENABLE_VCP_TOOL_INJECTION] ?: false,
         enableAgentBubbleTheme = this[Keys.ENABLE_AGENT_BUBBLE_THEME] ?: false,
         enableThoughtChainInjection = this[Keys.ENABLE_THOUGHT_CHAIN_INJECTION] ?: false,
@@ -145,6 +149,8 @@ class DataStoreSettingsRepository(
     private object Keys {
         val VCP_SERVER_URL = stringPreferencesKey("vcp_server_url")
         val VCP_API_KEY = stringPreferencesKey("vcp_api_key")
+        val VCP_LOG_URL = stringPreferencesKey("vcp_log_url")
+        val VCP_LOG_KEY = stringPreferencesKey("vcp_log_key")
         val ENABLE_VCP_TOOL_INJECTION = booleanPreferencesKey("enable_vcp_tool_injection")
         val ENABLE_AGENT_BUBBLE_THEME = booleanPreferencesKey("enable_agent_bubble_theme")
         val ENABLE_THOUGHT_CHAIN_INJECTION = booleanPreferencesKey("enable_thought_chain_injection")
@@ -167,6 +173,8 @@ class DataStoreSettingsRepository(
         val json = readCompatSettings(settingsFile).apply {
             put("vcpServerUrl", settings.vcpServerUrl)
             put("vcpApiKey", settings.vcpApiKey)
+            put("vcpLogUrl", settings.vcpLogUrl)
+            put("vcpLogKey", settings.vcpLogKey)
             put("enableVcpToolInjection", settings.enableVcpToolInjection)
             put("enableAgentBubbleTheme", settings.enableAgentBubbleTheme)
             put("enableThoughtChainInjection", settings.enableThoughtChainInjection)
