@@ -18,6 +18,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 enum class VcpLogConnectionStatus {
     Disconnected,
@@ -37,33 +38,45 @@ data class VcpLogMessage(
     val maidName: String? = null,
 )
 
+/**
+ * VCPLog + VCPInfo 双通道客户端。
+ *
+ * VCPToolBox 后端有两条 WebSocket 广播通道：
+ * - /VCPlog/VCP_Key=   → 工具执行日志、审批请求、日记创建等
+ * - /vcpinfo/VCP_Key=  → RAG 召回内容、思维链进度、Agent 委派状态等
+ *
+ * 两条通道的消息都合并到同一个 [messages] Flow 中。
+ */
 class VcpLogClient(
     okHttpClient: OkHttpClient,
 ) {
-    // WebSocket 专用客户端：加心跳 ping + 无限 read timeout（长连接不能超时）
     private val wsClient = okHttpClient.newBuilder()
-        .pingInterval(30, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.SECONDS)
         .build()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _status = MutableStateFlow(VcpLogConnectionStatus.Disconnected)
     val status: StateFlow<VcpLogConnectionStatus> = _status.asStateFlow()
 
-    private val _messages = MutableSharedFlow<VcpLogMessage>(extraBufferCapacity = 64)
+    private val _messages = MutableSharedFlow<VcpLogMessage>(extraBufferCapacity = 128)
     val messages: SharedFlow<VcpLogMessage> = _messages.asSharedFlow()
 
-    private var webSocket: WebSocket? = null
+    // 两条 WebSocket 连接
+    private var logSocket: WebSocket? = null     // /VCPlog/
+    private var infoSocket: WebSocket? = null    // /vcpinfo/
+
     private var currentUrl: String? = null
     private var currentKey: String? = null
     private var shouldReconnect = false
     private var reconnectAttempt = 0
+    private var logConnected = false
+    private var infoConnected = false
 
     fun connect(wsUrl: String, wsKey: String) {
         disconnect()
-        if (wsUrl.isBlank() || wsKey.isBlank()) {
-            return
-        }
+        if (wsUrl.isBlank() || wsKey.isBlank()) return
         currentUrl = wsUrl
         currentKey = wsKey
         shouldReconnect = true
@@ -73,8 +86,12 @@ class VcpLogClient(
 
     fun disconnect() {
         shouldReconnect = false
-        webSocket?.close(1000, "Client disconnect")
-        webSocket = null
+        logSocket?.close(1000, "Client disconnect")
+        infoSocket?.close(1000, "Client disconnect")
+        logSocket = null
+        infoSocket = null
+        logConnected = false
+        infoConnected = false
         _status.value = VcpLogConnectionStatus.Disconnected
     }
 
@@ -84,53 +101,75 @@ class VcpLogClient(
             put("requestId", requestId)
             put("approved", approved)
         }
-        webSocket?.send(json.toString())
+        logSocket?.send(json.toString())
+    }
+
+    private fun toWsBase(rawUrl: String): String {
+        var base = rawUrl.trimEnd('/')
+        if (base.startsWith("http://")) base = "ws://" + base.removePrefix("http://")
+        else if (base.startsWith("https://")) base = "wss://" + base.removePrefix("https://")
+        else if (!base.startsWith("ws://") && !base.startsWith("wss://")) base = "ws://$base"
+        return base
+    }
+
+    private fun updateStatus() {
+        _status.value = when {
+            logConnected || infoConnected -> VcpLogConnectionStatus.Connected
+            else -> VcpLogConnectionStatus.Connecting
+        }
     }
 
     private fun doConnect(wsUrl: String, wsKey: String) {
         _status.value = VcpLogConnectionStatus.Connecting
+        val wsBase = toWsBase(wsUrl)
 
-        val url = buildString {
-            // 自动将 http(s):// 转为 ws(s):// — 用户可能配置的是 HTTP URL
-            var base = wsUrl.trimEnd('/')
-            if (base.startsWith("http://")) base = "ws://" + base.removePrefix("http://")
-            else if (base.startsWith("https://")) base = "wss://" + base.removePrefix("https://")
-            else if (!base.startsWith("ws://") && !base.startsWith("wss://")) base = "ws://$base"
-            append(base)
-            append("/VCPlog/VCP_Key=")
-            append(wsKey)
+        // ── 通道 1: VCPLog（工具日志、审批） ──
+        val logUrl = "$wsBase/VCPlog/VCP_Key=$wsKey"
+        Log.d(TAG, "Connecting VCPLog: $logUrl")
+        logSocket = wsClient.newWebSocket(
+            Request.Builder().url(logUrl).build(),
+            createListener("VCPLog", isLogChannel = true),
+        )
+
+        // ── 通道 2: VCPInfo（RAG 召回、思维链、委派） ──
+        val infoUrl = "$wsBase/vcpinfo/VCP_Key=$wsKey"
+        Log.d(TAG, "Connecting VCPInfo: $infoUrl")
+        infoSocket = wsClient.newWebSocket(
+            Request.Builder().url(infoUrl).build(),
+            createListener("VCPInfo", isLogChannel = false),
+        )
+    }
+
+    private fun createListener(tag: String, isLogChannel: Boolean) = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            Log.d(TAG, "$tag WebSocket connected")
+            if (isLogChannel) logConnected = true else infoConnected = true
+            reconnectAttempt = 0
+            updateStatus()
         }
-        Log.d(TAG, "VCPLog connecting to: $url")
 
-        val request = Request.Builder().url(url).build()
-        webSocket = wsClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                _status.value = VcpLogConnectionStatus.Connected
-                reconnectAttempt = 0
-                Log.d(TAG, "VCPLog WebSocket connected")
-            }
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            Log.d(TAG, "$tag message (${text.length} chars): ${text.take(300)}")
+            parseAndEmit(text, tag)
+        }
 
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d(TAG, "VCPLog message received (${text.length} chars): ${text.take(200)}")
-                parseAndEmit(text)
-            }
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, null)
+        }
 
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-            }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            Log.d(TAG, "$tag WebSocket closed: $code $reason")
+            if (isLogChannel) logConnected = false else infoConnected = false
+            updateStatus()
+            if (!logConnected && !infoConnected) scheduleReconnect()
+        }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "VCPLog WebSocket closed: $code $reason")
-                _status.value = VcpLogConnectionStatus.Disconnected
-                scheduleReconnect()
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.w(TAG, "VCPLog WebSocket failure", t)
-                _status.value = VcpLogConnectionStatus.Error
-                scheduleReconnect()
-            }
-        })
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            Log.w(TAG, "$tag WebSocket failure: ${t.message}")
+            if (isLogChannel) logConnected = false else infoConnected = false
+            updateStatus()
+            if (!logConnected && !infoConnected) scheduleReconnect()
+        }
     }
 
     private fun scheduleReconnect() {
@@ -138,28 +177,29 @@ class VcpLogClient(
         val url = currentUrl ?: return
         val key = currentKey ?: return
         reconnectAttempt++
-        // Exponential backoff: 3s, 6s, 12s, 24s, max 60s
         val delayMs = minOf(
             RECONNECT_BASE_DELAY_MS * (1L shl minOf(reconnectAttempt - 1, 4)),
             RECONNECT_MAX_DELAY_MS,
         )
-        Log.d(TAG, "VCPLog reconnect #$reconnectAttempt in ${delayMs}ms")
+        Log.d(TAG, "Reconnect #$reconnectAttempt in ${delayMs}ms")
         _status.value = VcpLogConnectionStatus.Connecting
         scope.launch {
             delay(delayMs)
-            if (shouldReconnect) {
-                doConnect(url, key)
-            }
+            if (shouldReconnect) doConnect(url, key)
         }
     }
 
-    private fun parseAndEmit(raw: String) {
+    // ── 消息解析（两条通道共用） ────────────────────
+
+    private fun parseAndEmit(raw: String, source: String) {
         runCatching {
             val json = JSONObject(raw)
             val type = json.optString("type", "unknown")
 
-            // Skip connection ack
-            if (type == "connection_ack") return
+            if (type == "connection_ack") {
+                Log.d(TAG, "$source connection acknowledged")
+                return
+            }
 
             val message = when (type) {
                 "vcp_log" -> parseVcpLog(json)
@@ -171,10 +211,10 @@ class VcpLogClient(
 
             if (message != null) {
                 val emitted = _messages.tryEmit(message)
-                Log.d(TAG, "VCPLog emit ${message.type}/${message.title} (success=$emitted, subscribers=${_messages.subscriptionCount.value})")
+                Log.d(TAG, "$source emit ${message.type}/${message.title} (ok=$emitted, subs=${_messages.subscriptionCount.value})")
             }
         }.onFailure {
-            Log.w(TAG, "Failed to parse VCPLog message: $raw", it)
+            Log.w(TAG, "$source parse failed: ${raw.take(200)}", it)
         }
     }
 
@@ -197,12 +237,10 @@ class VcpLogClient(
             }
         }.ifBlank { "VCP Log" }
 
-        val displayContent = extractDisplayContent(content)
-
         return VcpLogMessage(
             type = "vcp_log",
             title = title,
-            content = displayContent,
+            content = extractDisplayContent(content),
             toolName = toolName.ifBlank { null },
             maidName = maidName,
         )
@@ -265,18 +303,32 @@ class VcpLogClient(
     }
 
     private fun parseGeneric(json: JSONObject, type: String): VcpLogMessage {
+        // VCPInfo 通道的消息可能没有标准 type，直接用整个 JSON
         val message = json.optString("message", "")
         val data = json.opt("data")?.toString() ?: ""
+        val action = json.optString("action", "")
+        val dbName = json.optString("dbName", "")
+
+        val title = buildString {
+            if (type != "unknown") append(type)
+            if (action.isNotBlank()) {
+                if (isNotBlank()) append(" · ")
+                append(action)
+            }
+            if (dbName.isNotBlank()) {
+                if (isNotBlank()) append(" · ")
+                append(dbName)
+            }
+        }.ifBlank { "VCP Info" }
 
         return VcpLogMessage(
             type = type,
-            title = type,
-            content = message.ifBlank { data }.ifBlank { type },
+            title = title,
+            content = message.ifBlank { data }.ifBlank { json.toString(2) },
         )
     }
 
     private fun extractDisplayContent(raw: String): String {
-        // Try to extract plugin_error from JSON-wrapped error content
         if (raw.startsWith("{")) {
             runCatching {
                 val obj = JSONObject(raw)
