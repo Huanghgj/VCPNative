@@ -332,22 +332,27 @@ fun VcpLogSidebarPanel(
                 }
             }
 
-            // 用 derivedStateOf 避免每次 notifications.size 变化都重建列表
+            // 先取快照再 filter，避免 mutableStateListOf 并发修改崩溃
             val filtered by remember(selectedTab) {
                 derivedStateOf {
-                    when (selectedTab) {
-                        "observer" -> emptyList() // observer tab 不用 Compose 列表
-                        "rag" -> notifications.filter {
-                            it.type == "RAG_RETRIEVAL_DETAILS" || it.type == "DailyNote"
+                    try {
+                        val snapshot = notifications.toList() // 不可变副本
+                        when (selectedTab) {
+                            "observer" -> emptyList()
+                            "rag" -> snapshot.filter {
+                                it.type == "RAG_RETRIEVAL_DETAILS" || it.type == "DailyNote"
+                            }
+                            "tool" -> snapshot.filter {
+                                it.type == "vcp_log" && it.toolName != null
+                            }
+                            "approval" -> snapshot.filter { it.isApprovalRequest }
+                            "note" -> snapshot.filter {
+                                it.type == "daily_note_created" || it.type == "DailyNote"
+                            }
+                            else -> snapshot
                         }
-                        "tool" -> notifications.filter {
-                            it.type == "vcp_log" && it.toolName != null
-                        }
-                        "approval" -> notifications.filter { it.isApprovalRequest }
-                        "note" -> notifications.filter {
-                            it.type == "daily_note_created" || it.type == "DailyNote"
-                        }
-                        else -> notifications.toList()
+                    } catch (_: ConcurrentModificationException) {
+                        emptyList()
                     }
                 }
             }
@@ -377,10 +382,12 @@ fun VcpLogSidebarPanel(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    val displayList = filtered.asReversed()
                     items(
-                        items = filtered.asReversed(),
-                        key = { it.timestamp },
-                    ) { msg ->
+                        count = displayList.size,
+                        key = { index -> "${displayList[index].timestamp}_$index" },
+                    ) { index ->
+                        val msg = displayList[index]
                         NotificationRow(
                             message = msg,
                             onApprove = onApprove,
