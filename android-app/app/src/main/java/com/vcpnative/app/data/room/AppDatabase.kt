@@ -96,7 +96,7 @@ data class MessageEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("messageId")],
+    indices = [Index("messageId"), Index("hash")],
 )
 data class MessageAttachmentEntity(
     @PrimaryKey val id: String,
@@ -285,7 +285,7 @@ interface RegexRuleDao {
         MessageAttachmentEntity::class,
         RegexRuleEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -395,6 +395,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_message_attachments_hash` ON `message_attachments` (`hash`)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context,
@@ -409,6 +415,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_5_6,
                     MIGRATION_6_7,
                     MIGRATION_7_8,
+                    MIGRATION_8_9,
                 )
                 .build()
     }

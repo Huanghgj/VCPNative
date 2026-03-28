@@ -36,52 +36,56 @@ class NetworkBackedVcpModelCatalog(
     override suspend fun fetchAvailableModels(
         forceRefresh: Boolean,
         serviceConfigOverride: VcpServiceConfig?,
-    ): List<VcpModelInfo> =
-        mutex.withLock {
-            val settings = settingsRepository.currentSettings()
-            val serviceConfig = serviceConfigOverride ?: settings.toServiceConfig()
-            val nextCacheKey = "${serviceConfig.apiRootUrl}|${serviceConfig.apiKey}"
+    ): List<VcpModelInfo> {
+        val settings = settingsRepository.currentSettings()
+        val serviceConfig = serviceConfigOverride ?: settings.toServiceConfig()
+        val nextCacheKey = "${serviceConfig.apiRootUrl}|${serviceConfig.apiKey.hashCode()}"
 
+        // Fast path: return cached result without lock if not forcing refresh
+        mutex.withLock {
             if (!forceRefresh && cacheKey == nextCacheKey && cachedModels.isNotEmpty()) {
-                return@withLock cachedModels
+                return cachedModels
             }
 
             if (serviceConfig.baseUrl.isBlank() || serviceConfig.apiKey.isBlank()) {
                 cacheKey = nextCacheKey
                 cachedModels = emptyList()
-                return@withLock emptyList()
-            }
-
-            val request = Request.Builder()
-                .url(serviceConfig.modelsUrl)
-                .header("Authorization", "Bearer ${serviceConfig.apiKey}")
-                .get()
-                .build()
-
-            withContext(Dispatchers.IO) {
-                okHttpClient.newCall(request).execute()
-            }.use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) {
-                    val errorMessage = extractErrorMessage(body)
-                    error(
-                        buildString {
-                            append("获取模型列表失败: HTTP ${response.code}")
-                            if (!errorMessage.isNullOrBlank()) {
-                                append(" · ")
-                                append(errorMessage)
-                            }
-                        },
-                    )
-                }
-
-                val models = parseModels(body)
-
-                cacheKey = nextCacheKey
-                cachedModels = models
-                return@withLock models
+                return emptyList()
             }
         }
+
+        // Network call outside the lock to avoid blocking other callers
+        val request = Request.Builder()
+            .url(serviceConfig.modelsUrl)
+            .header("Authorization", "Bearer ${serviceConfig.apiKey}")
+            .get()
+            .build()
+
+        val models = withContext(Dispatchers.IO) {
+            okHttpClient.newCall(request).execute()
+        }.use { response ->
+            val body = response.body.string()
+            if (!response.isSuccessful) {
+                val errorMessage = extractErrorMessage(body)
+                error(
+                    buildString {
+                        append("获取模型列表失败: HTTP ${response.code}")
+                        if (!errorMessage.isNullOrBlank()) {
+                            append(" · ")
+                            append(errorMessage)
+                        }
+                    },
+                )
+            }
+            parseModels(body)
+        }
+
+        mutex.withLock {
+            cacheKey = nextCacheKey
+            cachedModels = models
+        }
+        return models
+    }
 
     private fun parseModels(body: String): List<VcpModelInfo> {
         if (body.isBlank()) {

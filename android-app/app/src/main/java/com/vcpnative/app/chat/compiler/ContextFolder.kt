@@ -161,7 +161,9 @@ object ContextFolder {
                         part.type == "image_url" -> {
                             val mediaType = detectMediaTypeFromDataUrl(part.dataUrl)
                             mediaCounts[mediaType] = (mediaCounts[mediaType] ?: 0) + 1
-                            approxChars += part.dataUrl?.length ?: 512
+                            // Use fixed estimate instead of actual data URL length to avoid
+                            // base64-encoded images (millions of chars) triggering premature folding
+                            approxChars += 512
                         }
 
                         else -> {

@@ -46,69 +46,74 @@ class AndroidChatAttachmentManager(
             mimeType = mimeType,
         )
         val tempFile = File.createTempFile("incoming_", extension.ifBlank { ".tmp" }, fileStore.rootDir)
-        val digest = MessageDigest.getInstance("SHA-256")
-        val copiedSize = resolver.openInputStream(uri)?.use { inputStream ->
-            FileOutputStream(tempFile).use { outputStream ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var total = 0L
-                while (true) {
-                    val readCount = inputStream.read(buffer)
-                    if (readCount <= 0) {
-                        break
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            val copiedSize = resolver.openInputStream(uri)?.use { inputStream ->
+                FileOutputStream(tempFile).use { outputStream ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var total = 0L
+                    while (true) {
+                        val readCount = inputStream.read(buffer)
+                        if (readCount <= 0) {
+                            break
+                        }
+                        digest.update(buffer, 0, readCount)
+                        outputStream.write(buffer, 0, readCount)
+                        total += readCount
                     }
-                    digest.update(buffer, 0, readCount)
-                    outputStream.write(buffer, 0, readCount)
-                    total += readCount
+                    total
                 }
-                total
-            }
-        } ?: throw IOException("Unable to open attachment input stream")
+            } ?: throw IOException("Unable to open attachment input stream")
 
-        val hash = digest.digest().toHexString()
-        val targetFile = File(fileStore.attachmentsDir, "$hash$extension")
-        if (!targetFile.exists()) {
-            if (!tempFile.renameTo(targetFile)) {
-                tempFile.copyTo(targetFile, overwrite = true)
+            val hash = digest.digest().toHexString()
+            val targetFile = File(fileStore.attachmentsDir, "$hash$extension")
+            if (!targetFile.exists()) {
+                if (!tempFile.renameTo(targetFile)) {
+                    tempFile.copyTo(targetFile, overwrite = true)
+                    tempFile.delete()
+                }
+            } else {
                 tempFile.delete()
             }
-        } else {
-            tempFile.delete()
-        }
 
-        val createdAt = System.currentTimeMillis()
-        val pdfRenderResult = if (mimeType == PDF_MIME_TYPE) {
-            renderPdfToFrames(targetFile)
-        } else {
-            PdfRenderResult()
-        }
-        val extractedText = if (pdfRenderResult.frames.isNotEmpty()) {
-            buildPdfSummary(
-                originalName = originalName,
-                totalPages = pdfRenderResult.frames.size,
-                wasTruncated = pdfRenderResult.wasTruncated,
-            )
-        } else {
-            extractTextIfSupported(
-                file = targetFile,
+            val createdAt = System.currentTimeMillis()
+            val pdfRenderResult = if (mimeType == PDF_MIME_TYPE) {
+                renderPdfToFrames(targetFile)
+            } else {
+                PdfRenderResult()
+            }
+            val extractedText = if (pdfRenderResult.frames.isNotEmpty()) {
+                buildPdfSummary(
+                    originalName = originalName,
+                    totalPages = pdfRenderResult.frames.size,
+                    wasTruncated = pdfRenderResult.wasTruncated,
+                )
+            } else {
+                extractTextIfSupported(
+                    file = targetFile,
+                    mimeType = mimeType,
+                    originalName = originalName,
+                )
+            }
+
+            ChatAttachment(
+                id = "draft_${UUID.randomUUID()}",
+                fileId = "attachment_$hash",
+                name = originalName,
                 mimeType = mimeType,
-                originalName = originalName,
+                size = metadata.size ?: copiedSize,
+                src = targetFile.absolutePath,
+                internalFileName = targetFile.name,
+                internalPath = "file://${targetFile.absolutePath}",
+                hash = hash,
+                createdAt = createdAt,
+                extractedText = extractedText,
+                imageFrames = pdfRenderResult.frames,
             )
+        } catch (error: Throwable) {
+            tempFile.delete()
+            throw error
         }
-
-        ChatAttachment(
-            id = "draft_${UUID.randomUUID()}",
-            fileId = "attachment_$hash",
-            name = originalName,
-            mimeType = mimeType,
-            size = metadata.size ?: copiedSize,
-            src = targetFile.absolutePath,
-            internalFileName = targetFile.name,
-            internalPath = "file://${targetFile.absolutePath}",
-            hash = hash,
-            createdAt = createdAt,
-            extractedText = extractedText,
-            imageFrames = pdfRenderResult.frames,
-        )
     }
 
     private fun loadMetadata(uri: Uri): AttachmentMetadata {

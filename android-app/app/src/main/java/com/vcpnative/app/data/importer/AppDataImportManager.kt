@@ -520,6 +520,9 @@ class AppDataImportManager(
         parsed: ParsedAppData,
         preparedFiles: PreparedImportFiles,
     ) {
+        // Commit file operations first — they are harder to roll back
+        commitPreparedFiles(preparedFiles)
+
         database.withTransaction {
             database.agentDao().deleteAll()
             parsed.agents.forEach { agent ->
@@ -561,7 +564,6 @@ class AppDataImportManager(
             agentId = parsed.settings.lastAgentId,
             topicId = parsed.settings.lastTopicConversationId,
         )
-        commitPreparedFiles(preparedFiles)
     }
 
     private fun prepareImportFiles(
@@ -674,10 +676,24 @@ class AppDataImportManager(
         stagedDir: File,
         targetDir: File,
     ) {
-        targetDir.deleteRecursively()
         targetDir.parentFile?.mkdirs()
-        if (!stagedDir.renameTo(targetDir)) {
-            stagedDir.copyRecursively(targetDir, overwrite = true)
+        if (targetDir.exists()) {
+            val backupDir = File(targetDir.parentFile, "${targetDir.name}.bak_${System.currentTimeMillis()}")
+            if (targetDir.renameTo(backupDir)) {
+                if (!stagedDir.renameTo(targetDir)) {
+                    stagedDir.copyRecursively(targetDir, overwrite = true)
+                }
+                backupDir.deleteRecursively()
+            } else {
+                targetDir.deleteRecursively()
+                if (!stagedDir.renameTo(targetDir)) {
+                    stagedDir.copyRecursively(targetDir, overwrite = true)
+                }
+            }
+        } else {
+            if (!stagedDir.renameTo(targetDir)) {
+                stagedDir.copyRecursively(targetDir, overwrite = true)
+            }
         }
     }
 

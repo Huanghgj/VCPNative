@@ -274,7 +274,16 @@ private fun buildImagePreview(
         return null
     }
     val file = resolveAttachmentFile(attachment, appContainer) ?: return null
-    val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+    // First pass: decode bounds only to calculate sample size
+    val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.absolutePath, boundsOptions)
+    val maxEdge = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
+    var sampleSize = 1
+    while (maxEdge / sampleSize > MAX_IMAGE_PREVIEW_EDGE) {
+        sampleSize *= 2
+    }
+    val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    val bitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return null
     return bitmap.asImageBitmap()
 }
 
@@ -295,17 +304,20 @@ private fun buildPdfPreviews(
                     continue
                 }
                 val bytes = Base64.decode(encoded, Base64.DEFAULT)
-                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+                // Decode with downsampling to avoid OOM on high-resolution page renders
+                val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOptions)
+                val maxEdge = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
+                var sampleSize = 1
+                while (maxEdge / sampleSize > MAX_IMAGE_PREVIEW_EDGE) {
+                    sampleSize *= 2
+                }
+                val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions) ?: continue
                 add(bitmap.asImageBitmap())
             }
         }
-    }.getOrElse { error ->
-        if (error is JSONException) {
-            emptyList()
-        } else {
-            emptyList()
-        }
-    }
+    }.getOrElse { emptyList() }
 }
 
 private fun resolveAttachmentFile(
@@ -348,3 +360,4 @@ private sealed interface AttachmentViewerUiState {
 
 private const val MAX_TEXT_PREVIEW_CHARS = 12_000
 private const val MAX_PDF_PREVIEW_PAGES = 8
+private const val MAX_IMAGE_PREVIEW_EDGE = 2048

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -168,7 +169,8 @@ private fun BootstrapScreen(
                     brush = Brush.verticalGradient(
                         colors = listOf(
                             MaterialTheme.colorScheme.surface,
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.15f),
                         )
                     )
                 )
@@ -183,16 +185,17 @@ private fun BootstrapScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Spacer(modifier = Modifier.height(48.dp))
-                
+
+                // Cute gradient circle with icon
                 Box(
                     modifier = Modifier
-                        .size(100.dp)
+                        .size(110.dp)
                         .clip(CircleShape)
                         .background(
                             brush = Brush.linearGradient(
                                 colors = listOf(
                                     MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.tertiary
+                                    MaterialTheme.colorScheme.secondary
                                 )
                             )
                         ),
@@ -220,9 +223,9 @@ private fun BootstrapScreen(
 
                 Text(
                     text = if (uiState.isConfigured) {
-                        "正在恢复工作区，请稍候… ✨"
+                        "唤醒中，马上就好哦~"
                     } else {
-                        "首次启动，正在唤醒系统服务… 🚀"
+                        "初次见面，正在准备你的小世界~"
                     },
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold,
@@ -236,37 +239,37 @@ private fun BootstrapScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(8.dp)
-                        .clip(CircleShape),
+                        .clip(RoundedCornerShape(4.dp)),
                     color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                    trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                 )
 
                 Spacer(modifier = Modifier.height(40.dp))
 
                 BootstrapPathCard(
-                    title = "私有根目录", 
+                    title = "私有根目录",
                     value = uiState.rootDir,
                     color = MaterialTheme.colorScheme.primary
                 )
                 BootstrapPathCard(
-                    title = "附件目录", 
+                    title = "附件目录",
                     value = uiState.attachmentsDir,
                     color = MaterialTheme.colorScheme.secondary
                 )
                 BootstrapPathCard(
-                    title = "导入目录", 
+                    title = "导入目录",
                     value = uiState.importsDir,
                     color = MaterialTheme.colorScheme.tertiary
                 )
-                
+
                 uiState.importStatus?.let { status ->
                     BootstrapPathCard(
-                        title = "数据导入状态", 
+                        title = "数据导入状态",
                         value = status,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(48.dp))
             }
         }
@@ -282,7 +285,7 @@ private fun BootstrapPathCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 16.dp),
+            .padding(bottom = 12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
@@ -296,27 +299,28 @@ private fun BootstrapPathCard(
         ) {
             Box(
                 modifier = Modifier
-                    .width(6.dp)
+                    .width(5.dp)
                     .fillMaxHeight()
+                    .clip(RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp))
                     .background(color)
             )
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Outlined.Terminal,
                         contentDescription = null,
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(15.dp),
                         tint = color
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = title, 
+                        text = title,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Bold,
                         color = color
                     )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = value,
                     style = MaterialTheme.typography.bodySmall,
@@ -368,7 +372,8 @@ fun SetupGateScreen(
                     brush = Brush.verticalGradient(
                         colors = listOf(
                             MaterialTheme.colorScheme.surface,
-                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.15f),
                         )
                     )
                 ),
@@ -386,48 +391,55 @@ fun SetupGateScreen(
                     modifier = Modifier
                         .size(120.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.1f)),
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.primaryContainer,
+                                    MaterialTheme.colorScheme.secondaryContainer,
+                                )
+                            )
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.AutoAwesome,
                         contentDescription = null,
                         modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.secondary,
+                        tint = MaterialTheme.colorScheme.primary,
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(32.dp))
-                
+
                 Text(
-                    text = "传送门尚未开启",
+                    text = "还没有连上哦~",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 Text(
-                    text = "指挥官，我们还没能连接到核心服务器。\n请先完成基础设置，开启你的次元之旅吧！✨",
+                    text = "先来做一下基础设置吧，\n很快就能开始聊天啦~",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     lineHeight = 24.sp
                 )
-                
+
                 Spacer(modifier = Modifier.height(40.dp))
-                
+
                 Button(
                     onClick = onOpenSettings,
                     modifier = Modifier
                         .fillMaxWidth(0.7f)
                         .height(56.dp),
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(28.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary
                     ),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(imageVector = Icons.Outlined.Settings, contentDescription = null)
@@ -443,4 +455,3 @@ fun SetupGateScreen(
         }
     }
 }
-

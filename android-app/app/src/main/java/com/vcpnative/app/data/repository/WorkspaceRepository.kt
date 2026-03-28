@@ -199,36 +199,47 @@ class RoomWorkspaceRepository(
         syncCompatHistory: Boolean,
     ) {
         val timestamp = System.currentTimeMillis()
-        messageDao.updateContent(
-            messageId = messageId,
-            content = content,
-            status = status,
-            updatedAt = timestamp,
-        )
-        topicDao.touch(topicId, timestamp)
+        database.withTransaction {
+            messageDao.updateContent(
+                messageId = messageId,
+                content = content,
+                status = status,
+                updatedAt = timestamp,
+            )
+            topicDao.touch(topicId, timestamp)
+        }
         if (syncCompatHistory) {
-            syncCompatHistory(topicId)
+            val isStreaming = status in setOf("draft", "streaming")
+            syncCompatHistory(topicId, debounce = isStreaming)
         }
     }
 
     override suspend fun deleteMessage(topicId: String, messageId: String) {
-        messageDao.deleteById(messageId)
-        topicDao.touch(topicId, System.currentTimeMillis())
+        val timestamp = System.currentTimeMillis()
+        database.withTransaction {
+            messageDao.deleteById(messageId)
+            topicDao.touch(topicId, timestamp)
+        }
         syncCompatHistory(topicId)
     }
 
     override suspend fun deleteMessagesFrom(topicId: String, createdAt: Long) {
-        messageDao.deleteFrom(topicId, createdAt)
-        topicDao.touch(topicId, System.currentTimeMillis())
+        val timestamp = System.currentTimeMillis()
+        database.withTransaction {
+            messageDao.deleteFrom(topicId, createdAt)
+            topicDao.touch(topicId, timestamp)
+        }
         syncCompatHistory(topicId)
     }
 
     override suspend fun saveAgent(agent: AgentEntity): AgentEntity {
         val savedAgent = agent.copy(updatedAt = System.currentTimeMillis())
-        if (agentDao.findById(savedAgent.id) == null) {
-            agentDao.insert(savedAgent)
-        } else {
-            agentDao.update(savedAgent)
+        database.withTransaction {
+            if (agentDao.findById(savedAgent.id) == null) {
+                agentDao.insert(savedAgent)
+            } else {
+                agentDao.update(savedAgent)
+            }
         }
         syncCompatAgentSnapshot(savedAgent.id)
         return savedAgent
@@ -272,7 +283,20 @@ class RoomWorkspaceRepository(
     override suspend fun loadRegexRules(agentId: String): List<RegexRuleEntity> =
         regexRuleDao.loadByAgent(agentId)
 
-    private suspend fun syncCompatHistory(topicId: String) {
+    @Volatile
+    private var lastHistorySyncTimeMs = 0L
+    private val historySyncMinIntervalMs = 2_000L
+
+    private suspend fun syncCompatHistory(topicId: String, debounce: Boolean = false) {
+        if (debounce) {
+            val now = System.currentTimeMillis()
+            if (now - lastHistorySyncTimeMs < historySyncMinIntervalMs) {
+                // Skip this sync — too recent. The final non-debounced call
+                // (when streaming completes) will flush everything.
+                return
+            }
+            lastHistorySyncTimeMs = now
+        }
         val topic = topicDao.findById(topicId) ?: return
         syncCompatHistory(topic)
     }
@@ -599,9 +623,11 @@ class RoomWorkspaceRepository(
         }.getOrDefault(emptyList())
 
     private fun buildId(prefix: String, timestamp: Long): String =
-        "${prefix}_${java.lang.Long.toString(timestamp, 36)}"
+        "${prefix}_${java.lang.Long.toString(timestamp, 36)}_${idCounter.incrementAndGet()}"
 
     private companion object {
+        private val idCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
         const val AVATAR_BASENAME = "avatar"
         const val CONFIG_FILE_NAME = "config.json"
         const val REGEX_RULES_FILE_NAME = "regex_rules.json"

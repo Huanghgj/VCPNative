@@ -128,7 +128,7 @@ private fun AgentsScreen(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
                                 MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.tertiary
+                                MaterialTheme.colorScheme.secondary
                             )
                         )
                     )
@@ -156,7 +156,7 @@ private fun AgentsScreen(
                         )
                     )
                     Text(
-                        text = "欢迎回来，指挥官！✨",
+                        text = "欢迎回来~今天也一起加油吧!",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -206,7 +206,7 @@ private fun AgentsScreen(
                 }
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
-                    text = "还没有小伙伴入驻哦～",
+                    text = "还没有小伙伴哦~",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -214,7 +214,7 @@ private fun AgentsScreen(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "点击右下角的魔法按钮，\n召唤你的第一个专属 Agent 吧！",
+                    text = "点击右下角的按钮，\n召唤你的第一个 Agent 吧~",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

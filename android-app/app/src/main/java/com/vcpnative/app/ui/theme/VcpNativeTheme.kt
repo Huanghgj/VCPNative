@@ -4,72 +4,87 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-// ── Precision Cyber-Minimalism ──────────────────────────────────────
-// Primary: Amethyst Purple  |  Secondary: Electric Blue  |  Tertiary: Rose
+// ── Kawaii Twilight ─────────────────────────────────────────────────
+// Primary: Lavender Dream  |  Secondary: Mint Soda  |  Tertiary: Honey Gold
+// No pink. Cute but not saccharine. Anime vibes with soft pastels.
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF4B00D1),
+    primary = Color(0xFF7C5CFC),           // Lavender Dream
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFE0D4FF),
-    onPrimaryContainer = Color(0xFF160046),
-    secondary = Color(0xFF00639A),
+    primaryContainer = Color(0xFFE8E0FF),   // Soft lilac cloud
+    onPrimaryContainer = Color(0xFF21005E),
+    secondary = Color(0xFF2BB89E),          // Mint Soda
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFCEE5FF),
-    onSecondaryContainer = Color(0xFF001D32),
-    tertiary = Color(0xFF984061),
+    secondaryContainer = Color(0xFFBFF5E8), // Mint foam
+    onSecondaryContainer = Color(0xFF00201A),
+    tertiary = Color(0xFFE09830),           // Honey Gold
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFFFD9E2),
-    onTertiaryContainer = Color(0xFF3E001D),
-    background = Color(0xFFFBFCFF),
-    onBackground = Color(0xFF191C20),
-    surface = Color(0xFFFBFCFF),
-    onSurface = Color(0xFF191C20),
-    surfaceVariant = Color(0xFFE7E0EB),
-    onSurfaceVariant = Color(0xFF49454E),
-    error = Color(0xFFBA1A1A),
-    errorContainer = Color(0xFFFFDAD6),
-    onErrorContainer = Color(0xFF410002),
-    outline = Color(0xFF7A757F),
-    outlineVariant = Color(0xFFCAC4CF),
+    tertiaryContainer = Color(0xFFFFE4B8),  // Warm honey glow
+    onTertiaryContainer = Color(0xFF2C1600),
+    background = Color(0xFFFFF9F2),         // Cream paper
+    onBackground = Color(0xFF1C1B1F),
+    surface = Color(0xFFFFFCF7),            // Warm white
+    onSurface = Color(0xFF1C1B1F),
+    surfaceVariant = Color(0xFFF0E8F5),     // Lavender mist
+    onSurfaceVariant = Color(0xFF49454F),
+    error = Color(0xFFE53935),              // Soft red (anime warning)
+    errorContainer = Color(0xFFFFDAD4),
+    onErrorContainer = Color(0xFF410001),
+    outline = Color(0xFF9E8FB8),            // Soft purple-gray
+    outlineVariant = Color(0xFFD6C8E8),     // Light purple border
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFC4A7FF),
-    onPrimary = Color(0xFF240071),
-    primaryContainer = Color(0xFF3700A0),
-    onPrimaryContainer = Color(0xFFE0D4FF),
-    secondary = Color(0xFF96CCFF),
-    onSecondary = Color(0xFF003353),
-    secondaryContainer = Color(0xFF004A75),
-    onSecondaryContainer = Color(0xFFCEE5FF),
-    tertiary = Color(0xFFFFB1C8),
-    onTertiary = Color(0xFF5E1133),
-    tertiaryContainer = Color(0xFF7B2949),
-    onTertiaryContainer = Color(0xFFFFD9E2),
-    background = Color(0xFF111318),
-    onBackground = Color(0xFFE2E2E9),
-    surface = Color(0xFF111318),
-    onSurface = Color(0xFFE2E2E9),
-    surfaceVariant = Color(0xFF49454E),
-    onSurfaceVariant = Color(0xFFCAC4CF),
+    primary = Color(0xFFB8A4FF),            // Moonlit lavender
+    onPrimary = Color(0xFF381E8F),
+    primaryContainer = Color(0xFF4F35C0),   // Deep amethyst
+    onPrimaryContainer = Color(0xFFE8E0FF),
+    secondary = Color(0xFF6EE7B7),          // Neon mint
+    onSecondary = Color(0xFF00382C),
+    secondaryContainer = Color(0xFF005140), // Deep sea green
+    onSecondaryContainer = Color(0xFFBFF5E8),
+    tertiary = Color(0xFFFFD580),           // Starlight amber
+    onTertiary = Color(0xFF462B00),
+    tertiaryContainer = Color(0xFF654000),  // Deep amber
+    onTertiaryContainer = Color(0xFFFFE4B8),
+    background = Color(0xFF1A1B2E),         // Anime night sky
+    onBackground = Color(0xFFE6E1E5),
+    surface = Color(0xFF1E1F33),            // Twilight surface
+    onSurface = Color(0xFFE6E1E5),
+    surfaceVariant = Color(0xFF2D2E45),     // Soft night panel
+    onSurfaceVariant = Color(0xFFCAC4D0),
     error = Color(0xFFFFB4AB),
     errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
-    outline = Color(0xFF948F99),
-    outlineVariant = Color(0xFF49454E),
+    onErrorContainer = Color(0xFFFFDAD4),
+    outline = Color(0xFF7A7585),
+    outlineVariant = Color(0xFF3D3C50),
 )
 
+// Bubbly, rounded shapes — anime-cute feel
 private val AppShapes = Shapes(
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(28.dp),
 )
+
+// Slightly softer typography weights for a friendlier feel
+private val AppTypography = Typography().let { base ->
+    base.copy(
+        headlineLarge = base.headlineLarge.copy(fontWeight = FontWeight.ExtraBold),
+        headlineMedium = base.headlineMedium.copy(fontWeight = FontWeight.Bold),
+        headlineSmall = base.headlineSmall.copy(fontWeight = FontWeight.Bold),
+        titleLarge = base.titleLarge.copy(fontWeight = FontWeight.Bold),
+        titleMedium = base.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+    )
+}
 
 @Composable
 fun VcpNativeTheme(
@@ -78,6 +93,7 @@ fun VcpNativeTheme(
     MaterialTheme(
         colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
         shapes = AppShapes,
+        typography = AppTypography,
         content = content,
     )
 }

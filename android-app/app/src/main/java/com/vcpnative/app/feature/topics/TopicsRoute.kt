@@ -153,7 +153,7 @@ private fun TopicsScreen(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
                                 MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.tertiary
+                                MaterialTheme.colorScheme.secondary
                             )
                         )
                     )
@@ -196,7 +196,7 @@ private fun TopicsScreen(
                         )
                     )
                     Text(
-                        text = "正在与 $agentName 连线中... 💬",
+                        text = "正在与 $agentName 聊天中~",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -246,7 +246,7 @@ private fun TopicsScreen(
                 }
                 Spacer(modifier = Modifier.height(24.dp))
                 Text(
-                    text = "还没有对话记录哦～",
+                    text = "还没有对话记录哦~",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -254,7 +254,7 @@ private fun TopicsScreen(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "快点击下方的加号，\n开启一段奇妙的冒险对话吧！",
+                    text = "点击下方的加号，\n开始聊天吧~",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -373,7 +373,7 @@ private fun TopicsScreen(
     renameTarget?.let { topic ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名话题 ✨", fontWeight = FontWeight.Bold) },
+            title = { Text("重命名话题", fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = renameText,
@@ -410,7 +410,7 @@ private fun TopicsScreen(
     deleteTarget?.let { topic ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("要抹除这段记忆吗？❄️", fontWeight = FontWeight.Bold) },
+            title = { Text("要删除这段记忆吗？", fontWeight = FontWeight.Bold) },
             text = {
                 Text("确定要删除「${topic.title}」吗？一旦删除，你们之间的所有聊天记录都将消失在虚空之中哦。")
             },

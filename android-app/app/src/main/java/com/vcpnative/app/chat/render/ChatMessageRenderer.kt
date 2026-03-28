@@ -63,6 +63,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -116,6 +117,13 @@ enum class ChatRenderMode {
     Final,
 }
 
+data class ImageViewerRequest(
+    val url: String,
+    val alt: String?,
+)
+
+val LocalImageViewerCallback = compositionLocalOf<((ImageViewerRequest) -> Unit)?> { null }
+
 @Composable
 fun ChatMessageContent(
     content: String,
@@ -167,17 +175,15 @@ fun ChatMessageContent(
         return
     }
 
-    key(mode, content.hashCode()) {
-        ChatRenderBlocksView(
-            blocks = document.blocks,
-            mode = mode,
-            onActionMessage = onActionMessage,
-            onLongPress = onLongPress,
-            pauseDynamicContent = pauseDynamicContent,
-            modifier = modifier,
-            nested = false,
-        )
-    }
+    ChatRenderBlocksView(
+        blocks = document.blocks,
+        mode = mode,
+        onActionMessage = onActionMessage,
+        onLongPress = onLongPress,
+        pauseDynamicContent = pauseDynamicContent,
+        modifier = modifier,
+        nested = false,
+    )
 }
 
 @Composable
@@ -1802,7 +1808,7 @@ private fun InteractiveButtonsView(
 
 @Composable
 private fun RemoteImageView(block: ChatRenderBlock.RemoteImage) {
-    val uriHandler = LocalUriHandler.current
+    val imageViewerCallback = LocalImageViewerCallback.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1816,9 +1822,9 @@ private fun RemoteImageView(block: ChatRenderBlock.RemoteImage) {
                 shape = RoundedCornerShape(16.dp),
             )
             .clickable {
-                runCatching {
-                    uriHandler.openUri(block.url)
-                }
+                imageViewerCallback?.invoke(
+                    ImageViewerRequest(url = block.url, alt = block.alt),
+                )
             }
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -2083,28 +2089,20 @@ private fun parseChatRenderDocumentCached(
         mode = mode,
         role = role,
     )
-    synchronized(chatRenderDocumentCache) {
-        chatRenderDocumentCache.get(cacheKey)?.let { return it }
-    }
+    chatRenderDocumentCache.get(cacheKey)?.let { return it }
 
     val parsed = VcpChatMessageParser.parse(content, mode, role)
-    synchronized(chatRenderDocumentCache) {
-        chatRenderDocumentCache.put(cacheKey, parsed)
-    }
+    chatRenderDocumentCache.put(cacheKey, parsed)
     return parsed
 }
 
 private fun parseNativeHtmlDocumentCached(
     html: String,
 ): NativeHtmlDocumentModel {
-    synchronized(nativeHtmlDocumentCache) {
-        nativeHtmlDocumentCache.get(html)?.let { return it }
-    }
+    nativeHtmlDocumentCache.get(html)?.let { return it }
 
     val parsed = parseNativeHtmlDocument(html)
-    synchronized(nativeHtmlDocumentCache) {
-        nativeHtmlDocumentCache.put(html, parsed)
-    }
+    nativeHtmlDocumentCache.put(html, parsed)
     return parsed
 }
 
@@ -2190,9 +2188,12 @@ private fun BrowserHtmlBlockView(
     var hasConfirmedHeight by rememberSaveable(html) { mutableStateOf(false) }
     var loadedHtml by rememberSaveable(html) { mutableStateOf<String?>(null) }
     val minHeightPx = with(density) { 48.dp.roundToPx() }
-    val wrappedHtml = remember(renderState.html) {
+    val imageViewerCallback = LocalImageViewerCallback.current
+    val imageViewerCallbackState = rememberUpdatedState(imageViewerCallback)
+    val wrappedHtml = remember(renderState.html, imageViewerCallback != null) {
         buildBrowserHtmlDocument(
             rawHtml = renderState.html,
+            enableImagePreview = imageViewerCallback != null,
         )
     }
     val applyMeasuredHeight = { candidateHeightPx: Int ->
@@ -2269,7 +2270,7 @@ private fun BrowserHtmlBlockView(
                     settings.domStorageEnabled = false
                     settings.loadsImagesAutomatically = true
                     settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    settings.cacheMode = WebSettings.LOAD_CACHE_ELSE_NETWORK
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     settings.useWideViewPort = false
@@ -2313,7 +2314,13 @@ private fun BrowserHtmlBlockView(
                                     conn.instanceFollowRedirects = true
                                     val contentType = conn.contentType ?: "image/*"
                                     val encoding = conn.contentEncoding
-                                    WebResourceResponse(contentType, encoding, conn.inputStream)
+                                    // Wrap input stream to close connection when stream is closed
+                                    val wrappedStream = object : java.io.FilterInputStream(conn.inputStream) {
+                                        override fun close() {
+                                            try { super.close() } finally { conn.disconnect() }
+                                        }
+                                    }
+                                    WebResourceResponse(contentType, encoding, wrappedStream)
                                 } catch (_: Exception) {
                                     null
                                 }
@@ -2328,6 +2335,14 @@ private fun BrowserHtmlBlockView(
                             context = context,
                             link = request?.url?.toString(),
                             onActionMessage = actionState.value,
+                            onImagePreviewRequest = { req ->
+                                imageViewerCallbackState.value?.invoke(
+                                    ImageViewerRequest(
+                                        url = req.originalUrl ?: req.displayUrl,
+                                        alt = req.alt,
+                                    ),
+                                )
+                            },
                         )
 
                         @Deprecated("Deprecated in Java")
@@ -2338,6 +2353,14 @@ private fun BrowserHtmlBlockView(
                             context = context,
                             link = url,
                             onActionMessage = actionState.value,
+                            onImagePreviewRequest = { req ->
+                                imageViewerCallbackState.value?.invoke(
+                                    ImageViewerRequest(
+                                        url = req.originalUrl ?: req.displayUrl,
+                                        alt = req.alt,
+                                    ),
+                                )
+                            },
                         )
 
                         override fun onPageFinished(view: WebView, url: String?) {
@@ -4110,7 +4133,7 @@ private fun NativeMarkdownBlockView(
         normalizeNativeMarkdownInput(text)
     }
     val markwon = remember(context, textColor, linkColor) {
-        createNativeMarkwon(
+        getOrCreateCachedMarkwon(
             context = context,
             textColor = textColor,
             linkColor = linkColor,
@@ -4120,7 +4143,7 @@ private fun NativeMarkdownBlockView(
         )
     }
     // 缓存 Markwon 渲染结果，避免滚动时反复解析 markdown
-    val spanned = remember(markwon, normalizedText) {
+    val spanned = remember(normalizedText, textColor, linkColor) {
         markwon.toMarkdown(normalizedText)
     }
 
@@ -4151,7 +4174,8 @@ private fun NativeMarkdownBlockView(
                 }
                 viewTreeObserver.addOnGlobalLayoutListener {
                     val h = measuredHeight
-                    if (h > 0 && abs(h - measuredHeightPx) >= 2) {
+                    // Only update on significant height changes to avoid churn during scroll
+                    if (h > 0 && (measuredHeightPx == 0 || abs(h - measuredHeightPx) > h / 10)) {
                         measuredHeightPx = h
                     }
                 }
@@ -4169,6 +4193,26 @@ private fun NativeMarkdownBlockView(
             markwon.setParsedMarkdown(textView, spanned)
         },
     )
+}
+
+private data class MarkwonCacheKey(val textColor: Int, val linkColor: Int)
+@Volatile private var cachedMarkwonKey: MarkwonCacheKey? = null
+@Volatile private var cachedMarkwonInstance: Markwon? = null
+
+private fun getOrCreateCachedMarkwon(
+    context: android.content.Context,
+    textColor: Int,
+    linkColor: Int,
+    onActionMessage: (String) -> Unit,
+): Markwon {
+    val key = MarkwonCacheKey(textColor, linkColor)
+    cachedMarkwonInstance?.let { cached ->
+        if (cachedMarkwonKey == key) return cached
+    }
+    val instance = createNativeMarkwon(context, textColor, linkColor, onActionMessage)
+    cachedMarkwonKey = key
+    cachedMarkwonInstance = instance
+    return instance
 }
 
 private fun createNativeMarkwon(
@@ -4225,13 +4269,24 @@ private fun applyTextStyle(
     }
 }
 
+private val NORMALIZE_CODE_BLOCK_REGEX = Regex("""(?s)```.*?```""")
+private val NORMALIZE_DOCTYPE_REGEX = Regex("""(?is)<!DOCTYPE[^>]*>""")
+private val NORMALIZE_HEAD_REGEX = Regex("""(?is)<head\b[^>]*>.*?</head>""")
+private val NORMALIZE_STYLE_REGEX = Regex("""(?is)<style\b[^>]*>.*?</style>""")
+private val NORMALIZE_SCRIPT_REGEX = Regex("""(?is)<script\b[^>]*>.*?</script>""")
+private val NORMALIZE_HTML_BODY_REGEX = Regex("""(?is)</?(html|body)\b[^>]*>""")
+private val NORMALIZE_BR_REGEX = Regex("""(?is)<br\s*/?>""")
+private val NORMALIZE_BLOCK_TAGS_REGEX = Regex("""(?is)</?(div|p|section|article|header|footer|nav|aside|main|figure|figcaption)\b[^>]*>""")
+private val NORMALIZE_SPAN_REGEX = Regex("""(?is)</?span\b[^>]*>""")
+private val NORMALIZE_EXCESS_NEWLINES_REGEX = Regex("""\n{3,}""")
+
 private fun normalizeNativeMarkdownInput(rawText: String): String {
     if (rawText.isBlank() || '<' !in rawText) {
         return rawText
     }
 
     val protectedBlocks = mutableListOf<String>()
-    var normalized = Regex("""(?s)```.*?```""").replace(rawText) { match ->
+    var normalized = NORMALIZE_CODE_BLOCK_REGEX.replace(rawText) { match ->
         val token = "__VCP_NATIVE_CODE_BLOCK_${protectedBlocks.size}__"
         protectedBlocks += match.value
         token
@@ -4239,14 +4294,14 @@ private fun normalizeNativeMarkdownInput(rawText: String): String {
 
     normalized = extractHtmlBodyContent(normalized)
     normalized = normalized
-        .replace(Regex("""(?is)<!DOCTYPE[^>]*>"""), "")
-        .replace(Regex("""(?is)<head\b[^>]*>.*?</head>"""), "")
-        .replace(Regex("""(?is)<style\b[^>]*>.*?</style>"""), "")
-        .replace(Regex("""(?is)<script\b[^>]*>.*?</script>"""), "")
-        .replace(Regex("""(?is)</?(html|body)\b[^>]*>"""), "")
-        .replace(Regex("""(?is)<br\s*/?>"""), "<br />\n")
-        .replace(Regex("""(?is)</?(div|p|section|article|header|footer|nav|aside|main|figure|figcaption)\b[^>]*>"""), "\n")
-        .replace(Regex("""(?is)</?span\b[^>]*>"""), "")
+        .replace(NORMALIZE_DOCTYPE_REGEX, "")
+        .replace(NORMALIZE_HEAD_REGEX, "")
+        .replace(NORMALIZE_STYLE_REGEX, "")
+        .replace(NORMALIZE_SCRIPT_REGEX, "")
+        .replace(NORMALIZE_HTML_BODY_REGEX, "")
+        .replace(NORMALIZE_BR_REGEX, "<br />\n")
+        .replace(NORMALIZE_BLOCK_TAGS_REGEX, "\n")
+        .replace(NORMALIZE_SPAN_REGEX, "")
 
     normalized = NATIVE_HTML_BUTTON_REGEX.replace(normalized) { match ->
         buildNativeActionAnchor(
@@ -4256,7 +4311,7 @@ private fun normalizeNativeMarkdownInput(rawText: String): String {
     }
 
     normalized = normalized
-        .replace(Regex("""\n{3,}"""), "\n\n")
+        .replace(NORMALIZE_EXCESS_NEWLINES_REGEX, "\n\n")
         .trim()
 
     protectedBlocks.forEachIndexed { index, block ->
@@ -4866,11 +4921,11 @@ private const val BROWSER_HTML_RESUME_JS =
     "(function(){if(window.__vcpSetPaused){window.__vcpSetPaused(false);}return true;})();"
 private const val BROWSER_HTML_UPDATE_DEBOUNCE_MS = 180L
 private const val IMAGE_PREVIEW_LAUNCH_DEBOUNCE_MS = 700L
-private val BROWSER_HTML_RECOVERY_DELAYS_MS = longArrayOf(80L, 240L, 600L)
+private val BROWSER_HTML_RECOVERY_DELAYS_MS = longArrayOf(150L)
 private const val BROWSER_HTML_MIN_LENGTH_FOR_HEIGHT_GUARD = 700
 private const val BROWSER_HTML_PAUSE_TAG_KEY = 0x7F0B0211
-private const val CHAT_RENDER_DOCUMENT_CACHE_MAX_CHARS = 1_500_000
-private const val NATIVE_HTML_DOCUMENT_CACHE_MAX_CHARS = 1_000_000
+private const val CHAT_RENDER_DOCUMENT_CACHE_MAX_CHARS = 500_000
+private const val NATIVE_HTML_DOCUMENT_CACHE_MAX_CHARS = 300_000
 private val imagePreviewLaunchLock = Any()
 
 @Volatile

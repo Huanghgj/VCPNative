@@ -1,5 +1,6 @@
 package com.vcpnative.app.app
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -19,6 +20,7 @@ import com.vcpnative.app.feature.agenteditor.AgentEditorRoute
 import com.vcpnative.app.feature.attachment.AttachmentViewerScreen
 import com.vcpnative.app.feature.bootstrap.BootstrapRoute
 import com.vcpnative.app.feature.bootstrap.SetupGateScreen
+import com.vcpnative.app.feature.imageviewer.ImageViewerScreen
 import com.vcpnative.app.feature.settings.SettingsRoute
 import com.vcpnative.app.feature.chat.ChatRoute
 import com.vcpnative.app.feature.topics.TopicsRoute
@@ -27,6 +29,8 @@ private object VcpRoutes {
     const val ARG_AGENT_ID = "agentId"
     const val ARG_TOPIC_ID = "topicId"
     const val ARG_ATTACHMENT_ID = "attachmentId"
+    const val ARG_IMAGE_URL = "imageUrl"
+    const val ARG_IMAGE_ALT = "imageAlt"
 
     const val BOOTSTRAP = "bootstrap"
     const val SETUP_GATE = "setup-gate"
@@ -37,6 +41,7 @@ private object VcpRoutes {
     const val TOPICS_PATTERN = "workspace/topics/{$ARG_AGENT_ID}"
     const val CHAT_PATTERN = "workspace/chat/{$ARG_AGENT_ID}/{$ARG_TOPIC_ID}"
     const val ATTACHMENT_PATTERN = "attachment/{$ARG_ATTACHMENT_ID}"
+    const val IMAGE_VIEWER_PATTERN = "image-viewer?url={$ARG_IMAGE_URL}&alt={$ARG_IMAGE_ALT}"
 
     fun agentEditor(agentId: String): String = "workspace/agent/$agentId"
 
@@ -45,6 +50,12 @@ private object VcpRoutes {
     fun chat(agentId: String, topicId: String): String = "workspace/chat/$agentId/$topicId"
 
     fun attachment(attachmentId: String): String = "attachment/$attachmentId"
+
+    fun imageViewer(imageUrl: String, alt: String?): String {
+        val encodedUrl = Uri.encode(imageUrl)
+        val encodedAlt = Uri.encode(alt ?: "")
+        return "image-viewer?url=$encodedUrl&alt=$encodedAlt"
+    }
 }
 
 private fun navStringArgument(name: String) = navArgument(name) { type = NavType.StringType }
@@ -183,12 +194,17 @@ fun VcpNativeApp(
                 onNavigateBack = { navController.navigateUp() },
                 onOpenTopics = { navController.navigate(VcpRoutes.topics(agentId)) },
                 onOpenTopic = { nextTopicId ->
-                    navController.navigate(VcpRoutes.chat(agentId, nextTopicId))
+                    navController.navigate(VcpRoutes.chat(agentId, nextTopicId)) {
+                        popUpTo(VcpRoutes.CHAT_PATTERN) { inclusive = true }
+                    }
                 },
                 onOpenAgentEditor = { navController.navigate(VcpRoutes.agentEditor(agentId)) },
                 onOpenSettings = { navController.navigate(VcpRoutes.SETTINGS_STANDALONE) },
                 onOpenAttachment = { attachmentId ->
                     navController.navigate(VcpRoutes.attachment(attachmentId))
+                },
+                onOpenImageViewer = { imageUrl, alt ->
+                    navController.navigate(VcpRoutes.imageViewer(imageUrl, alt))
                 },
             )
         }
@@ -200,6 +216,30 @@ fun VcpNativeApp(
             AttachmentViewerScreen(
                 appContainer = appContainer,
                 attachmentId = backStackEntry.requireStringArg(VcpRoutes.ARG_ATTACHMENT_ID),
+                onNavigateBack = { navController.navigateUp() },
+            )
+        }
+
+        composable(
+            route = VcpRoutes.IMAGE_VIEWER_PATTERN,
+            arguments = listOf(
+                navArgument(VcpRoutes.ARG_IMAGE_URL) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(VcpRoutes.ARG_IMAGE_ALT) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+            ),
+        ) { backStackEntry ->
+            val imageUrl = backStackEntry.arguments?.getString(VcpRoutes.ARG_IMAGE_URL)
+                .orEmpty()
+            val alt = backStackEntry.arguments?.getString(VcpRoutes.ARG_IMAGE_ALT)
+                ?.takeIf { it.isNotBlank() }
+            ImageViewerScreen(
+                imageUrl = imageUrl,
+                alt = alt,
                 onNavigateBack = { navController.navigateUp() },
             )
         }

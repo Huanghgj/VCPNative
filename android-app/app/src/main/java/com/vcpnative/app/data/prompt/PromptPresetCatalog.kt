@@ -75,6 +75,11 @@ class FileBackedPromptPresetCatalog(
     override suspend fun loadPresetContent(presetFilePath: String): String =
         withContext(Dispatchers.IO) {
             val file = resolvePath(presetFilePath)
+            val managedRoot = fileStore.rootDir.canonicalPath
+            val canonicalPath = file.canonicalFile.path
+            require(canonicalPath.startsWith(managedRoot)) {
+                "预设文件路径不在可管理范围内"
+            }
             require(file.isFile) { "预设文件不存在: $presetFilePath" }
             file.readText()
         }

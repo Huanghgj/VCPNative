@@ -41,14 +41,14 @@ object ContextSanitizer {
         // 1. Extract and preserve VCP special blocks
         var blockIndex = 0
         working = VCP_SPECIAL_BLOCK_REGEX.replace(working) { match ->
-            val placeholder = "\u0000VCP_BLOCK_${blockIndex++}\u0000"
+            val placeholder = "\uFFFC\u200BVCP_BLK_${blockIndex++}\u200B\uFFFC"
             specialBlocks.add(placeholder to match.value)
             placeholder
         }
 
         // 2. Extract and preserve media tags
         working = MEDIA_TAG_REGEX.replace(working) { match ->
-            val placeholder = "\u0000VCP_BLOCK_${blockIndex++}\u0000"
+            val placeholder = "\uFFFC\u200BVCP_BLK_${blockIndex++}\u200B\uFFFC"
             specialBlocks.add(placeholder to match.value)
             placeholder
         }

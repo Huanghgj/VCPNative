@@ -9,9 +9,11 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.vcpnative.app.data.files.AppFileStore
 import com.vcpnative.app.model.AppSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -106,7 +108,19 @@ class DataStoreSettingsRepository(
                 preferences[Keys.LAST_TOPIC_ID] = topicId
             }
         }
-        syncCompatSettings(currentSettings())
+        // Skip full syncCompatSettings for session tracking — only write
+        // the two fields that changed to avoid redundant I/O on every chat entry.
+        withContext(Dispatchers.IO) {
+            val settingsFile = fileStore.compatSettingsFile()
+            if (settingsFile.isFile) {
+                val json = readCompatSettings(settingsFile)
+                json.put("lastOpenItemId", agentId)
+                json.put("lastAgentId", agentId)
+                json.put("lastOpenTopicId", topicId)
+                json.put("lastTopicId", topicId)
+                settingsFile.writeText(json.toString(2))
+            }
+        }
     }
 
     private fun Preferences.toAppSettings(): AppSettings = AppSettings(
@@ -147,7 +161,7 @@ class DataStoreSettingsRepository(
         val LAST_TOPIC_ID = stringPreferencesKey("last_topic_id")
     }
 
-    private fun syncCompatSettings(settings: AppSettings) {
+    private suspend fun syncCompatSettings(settings: AppSettings) = withContext(Dispatchers.IO) {
         val settingsFile = fileStore.compatSettingsFile()
         settingsFile.parentFile?.mkdirs()
         val json = readCompatSettings(settingsFile).apply {

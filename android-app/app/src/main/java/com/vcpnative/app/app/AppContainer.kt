@@ -21,6 +21,7 @@ import com.vcpnative.app.data.repository.WorkspaceRepository
 import com.vcpnative.app.data.room.AppDatabase
 import com.vcpnative.app.network.vcp.NetworkBackedVcpModelCatalog
 import com.vcpnative.app.network.vcp.VcpModelCatalog
+import com.vcpnative.app.network.vcp.boundedVcpHttpClient
 import com.vcpnative.app.network.vcp.defaultVcpHttpClient
 import okhttp3.OkHttpClient
 
@@ -89,7 +90,7 @@ class AppContainer(
     val modelCatalog: VcpModelCatalog by lazy {
         NetworkBackedVcpModelCatalog(
             settingsRepository = settingsRepository,
-            okHttpClient = okHttpClient,
+            okHttpClient = boundedHttpClient,
         )
     }
 
@@ -109,11 +110,15 @@ class AppContainer(
         TopicSummarizer(
             settingsRepository = settingsRepository,
             workspaceRepository = workspaceRepository,
-            okHttpClient = okHttpClient,
+            okHttpClient = boundedHttpClient,
         )
     }
 
     val okHttpClient: OkHttpClient by lazy {
         defaultVcpHttpClient()
+    }
+
+    private val boundedHttpClient: OkHttpClient by lazy {
+        boundedVcpHttpClient()
     }
 }

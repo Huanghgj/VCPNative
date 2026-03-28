@@ -255,43 +255,48 @@ class SettingsViewModel(
         }
 
         _uiState.value = snapshot.copy(isSaving = true)
-        val sanitizerDepth = snapshot.contextSanitizerDepth.toIntOrNull()?.coerceAtLeast(0) ?: 2
-        val keepRecent = snapshot.contextFoldingKeepRecentMessages.toIntOrNull()?.coerceAtLeast(4) ?: 12
-        val triggerMessageCount = snapshot.contextFoldingTriggerMessageCount.toIntOrNull()?.coerceAtLeast(8) ?: 24
-        val triggerCharCount = snapshot.contextFoldingTriggerCharCount.toIntOrNull()?.coerceAtLeast(4_000) ?: 24_000
-        val excerptCharLimit = snapshot.contextFoldingExcerptCharLimit.toIntOrNull()?.coerceAtLeast(40) ?: 160
-        val maxSummaryEntries = snapshot.contextFoldingMaxSummaryEntries.toIntOrNull()?.coerceAtLeast(8) ?: 40
-        val summaryModel = snapshot.topicSummaryModel.trim().ifBlank { "gemini-2.5-flash" }
-        settingsRepository.saveConnection(
-            serverUrl = snapshot.serverUrl,
-            apiKey = snapshot.apiKey,
-        )
-        settingsRepository.saveCompilerOptions(
-            enableVcpToolInjection = snapshot.enableVcpToolInjection,
-            enableAgentBubbleTheme = snapshot.enableAgentBubbleTheme,
-            enableThoughtChainInjection = snapshot.enableThoughtChainInjection,
-            enableContextSanitizer = snapshot.enableContextSanitizer,
-            contextSanitizerDepth = sanitizerDepth,
-            enableContextFolding = snapshot.enableContextFolding,
-            contextFoldingKeepRecentMessages = keepRecent,
-            contextFoldingTriggerMessageCount = triggerMessageCount,
-            contextFoldingTriggerCharCount = triggerCharCount,
-            contextFoldingExcerptCharLimit = excerptCharLimit,
-            contextFoldingMaxSummaryEntries = maxSummaryEntries,
-            topicSummaryModel = summaryModel,
-        )
-        _uiState.value = _uiState.value.copy(
-            isSaving = false,
-            contextSanitizerDepth = sanitizerDepth.toString(),
-            contextFoldingKeepRecentMessages = keepRecent.toString(),
-            contextFoldingTriggerMessageCount = triggerMessageCount.toString(),
-            contextFoldingTriggerCharCount = triggerCharCount.toString(),
-            contextFoldingExcerptCharLimit = excerptCharLimit.toString(),
-            contextFoldingMaxSummaryEntries = maxSummaryEntries.toString(),
-            topicSummaryModel = summaryModel,
-        )
-        refreshModels(forceRefresh = true)
-        return true
+        try {
+            val sanitizerDepth = snapshot.contextSanitizerDepth.toIntOrNull()?.coerceAtLeast(0) ?: 2
+            val keepRecent = snapshot.contextFoldingKeepRecentMessages.toIntOrNull()?.coerceAtLeast(4) ?: 12
+            val triggerMessageCount = snapshot.contextFoldingTriggerMessageCount.toIntOrNull()?.coerceAtLeast(8) ?: 24
+            val triggerCharCount = snapshot.contextFoldingTriggerCharCount.toIntOrNull()?.coerceAtLeast(4_000) ?: 24_000
+            val excerptCharLimit = snapshot.contextFoldingExcerptCharLimit.toIntOrNull()?.coerceAtLeast(40) ?: 160
+            val maxSummaryEntries = snapshot.contextFoldingMaxSummaryEntries.toIntOrNull()?.coerceAtLeast(8) ?: 40
+            val summaryModel = snapshot.topicSummaryModel.trim().ifBlank { "gemini-2.5-flash" }
+            settingsRepository.saveConnection(
+                serverUrl = snapshot.serverUrl,
+                apiKey = snapshot.apiKey,
+            )
+            settingsRepository.saveCompilerOptions(
+                enableVcpToolInjection = snapshot.enableVcpToolInjection,
+                enableAgentBubbleTheme = snapshot.enableAgentBubbleTheme,
+                enableThoughtChainInjection = snapshot.enableThoughtChainInjection,
+                enableContextSanitizer = snapshot.enableContextSanitizer,
+                contextSanitizerDepth = sanitizerDepth,
+                enableContextFolding = snapshot.enableContextFolding,
+                contextFoldingKeepRecentMessages = keepRecent,
+                contextFoldingTriggerMessageCount = triggerMessageCount,
+                contextFoldingTriggerCharCount = triggerCharCount,
+                contextFoldingExcerptCharLimit = excerptCharLimit,
+                contextFoldingMaxSummaryEntries = maxSummaryEntries,
+                topicSummaryModel = summaryModel,
+            )
+            _uiState.value = _uiState.value.copy(
+                isSaving = false,
+                contextSanitizerDepth = sanitizerDepth.toString(),
+                contextFoldingKeepRecentMessages = keepRecent.toString(),
+                contextFoldingTriggerMessageCount = triggerMessageCount.toString(),
+                contextFoldingTriggerCharCount = triggerCharCount.toString(),
+                contextFoldingExcerptCharLimit = excerptCharLimit.toString(),
+                contextFoldingMaxSummaryEntries = maxSummaryEntries.toString(),
+                topicSummaryModel = summaryModel,
+            )
+            refreshModels(forceRefresh = true)
+            return true
+        } catch (error: Throwable) {
+            _uiState.value = _uiState.value.copy(isSaving = false)
+            throw error
+        }
     }
 
     suspend fun exportAppData() {
@@ -439,7 +444,7 @@ private fun SettingsScreen(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
                                 MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.tertiary
+                                MaterialTheme.colorScheme.secondary
                             )
                         )
                     )
@@ -448,7 +453,7 @@ private fun SettingsScreen(
                     TopAppBar(
                         title = {
                             Text(
-                                text = if (isSetup) "指挥中心初始化 ✨" else "系统控制台 ⚙️",
+                                text = if (isSetup) "初始设置" else "系统设置",
                                 fontWeight = FontWeight.Black
                             )
                         },
@@ -489,7 +494,7 @@ private fun SettingsScreen(
         ) {
             
             AnimeSettingsCard(
-                title = "📡 核心通讯引流",
+                title = "核心连接",
                 subtitle = "先把灵魂连接参数固定下来，之后 Bootstrap 才能恢复到 Agent -> Topic -> Chat 主工作流哦～"
             ) {
                 OutlinedTextField(
@@ -515,7 +520,7 @@ private fun SettingsScreen(
             }
 
             AnimeSettingsCard(
-                title = "🪄 编译兼容魔法",
+                title = "编译选项",
                 subtitle = "调整底层咒语，适配各种奇妙的运行环境。"
             ) {
                 SettingsToggleRow(
@@ -560,7 +565,7 @@ private fun SettingsScreen(
             }
 
             AnimeSettingsCard(
-                title = "🧠 记忆折叠结界",
+                title = "上下文折叠",
                 subtitle = "直接参考 VCPChat `contextFolder.js` 默认值和语义，让伙伴的记忆更长久～"
             ) {
                 OutlinedTextField(
@@ -619,7 +624,7 @@ private fun SettingsScreen(
             }
 
             AnimeSettingsCard(
-                title = "🌟 星际模型雷达",
+                title = "可用模型",
                 subtitle = "按 VCPChat 的方式从 `${uiState.serverUrl.ifBlank { "(未配置)" }}` 对应的 `/v1/models` 获取。"
             ) {
                 Button(
@@ -661,7 +666,7 @@ private fun SettingsScreen(
             }
 
             AnimeSettingsCard(
-                title = "📁 秘密基地档案库",
+                title = "数据目录",
                 subtitle = "运行时真相来源固定为 DataStore + Room + private files。"
             ) {
                 Text(
@@ -679,7 +684,7 @@ private fun SettingsScreen(
 
             if (!isSetup) {
                 AnimeSettingsCard(
-                    title = "⏳ 时空穿梭备份",
+                    title = "数据备份",
                     subtitle = "从当前运行时真相和 compat view 重建桌面风格 AppData，并补回 passthrough 空位。"
                 ) {
                     Button(
@@ -689,7 +694,7 @@ private fun SettingsScreen(
                         shape = MaterialTheme.shapes.medium
                     ) {
                         Text(
-                            text = if (uiState.isExporting) "时空穿梭中…" else "导出当前 AppData",
+                            text = if (uiState.isExporting) "导出中…" else "导出当前 AppData",
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -736,7 +741,7 @@ private fun SettingsScreen(
                 shape = MaterialTheme.shapes.large
             ) {
                 Text(
-                    text = if (uiState.isSaving) "魔法封印中…" else "保存契约并继续 🚀",
+                    text = if (uiState.isSaving) "保存中…" else "保存并继续",
                     fontWeight = FontWeight.ExtraBold,
                     style = MaterialTheme.typography.titleMedium
                 )

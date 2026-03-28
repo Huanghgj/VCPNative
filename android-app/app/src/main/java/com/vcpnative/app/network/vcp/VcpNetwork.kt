@@ -2,6 +2,7 @@ package com.vcpnative.app.network.vcp
 
 import com.vcpnative.app.model.AppSettings
 import java.util.concurrent.TimeUnit
+import okhttp3.ConnectionPool
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -97,8 +98,26 @@ fun AppSettings.toServiceConfig(): VcpServiceConfig =
         apiKey = vcpApiKey.trim(),
     )
 
+private val sharedConnectionPool = ConnectionPool(
+    maxIdleConnections = 8,
+    keepAliveDuration = 5,
+    timeUnit = TimeUnit.MINUTES,
+)
+
 fun defaultVcpHttpClient(): OkHttpClient =
     OkHttpClient.Builder()
+        .connectionPool(sharedConnectionPool)
         .retryOnConnectionFailure(true)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.MINUTES) // Generous but finite timeout for SSE streaming
+        .build()
+
+/** Client with bounded timeouts for non-streaming requests (model catalog, summarizer). */
+fun boundedVcpHttpClient(): OkHttpClient =
+    OkHttpClient.Builder()
+        .connectionPool(sharedConnectionPool)
+        .retryOnConnectionFailure(true)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
         .build()

@@ -27,7 +27,9 @@ class SseEventParser {
             }
 
             trimmed.startsWith("data:") -> {
-                dataLines += trimmed.removePrefix("data:").trimStart()
+                val value = trimmed.removePrefix("data:")
+                // SSE spec: remove exactly one leading space if present
+                dataLines += if (value.startsWith(' ')) value.substring(1) else value
                 return null
             }
 

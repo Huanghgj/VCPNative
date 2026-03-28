@@ -152,6 +152,7 @@ class VcpCompatChatRequestCompiler(
             topicId = topicId,
             requestId = "msg_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
             endpoint = serviceConfig.chatUrl(settings.enableVcpToolInjection),
+            apiBaseUrl = serviceConfig.apiRootUrl,
             apiKey = serviceConfig.apiKey,
             model = agent?.model?.takeIf { it.isNotBlank() } ?: "gemini-pro",
             temperature = agent?.temperature ?: 0.7,
@@ -306,7 +307,7 @@ class VcpCompatChatRequestCompiler(
             }
 
             val regex = rule.findPattern.toRegexOrNull() ?: return@forEach
-            output = regex.replace(output, rule.replaceWith)
+            output = regex.replace(output, Regex.escapeReplacement(rule.replaceWith))
         }
         return output
     }
@@ -547,6 +548,7 @@ class VcpCompatChatRequestCompiler(
         mimeType: String,
     ): String? {
         val sourceFile = resolveAttachmentFile(attachment, fileManagerData) ?: return null
+        if (sourceFile.length() > MAX_ATTACHMENT_BYTES) return null
         val encoded = runCatching {
             Base64.encodeToString(sourceFile.readBytes(), Base64.NO_WRAP)
         }.getOrNull() ?: return null
@@ -557,6 +559,7 @@ class VcpCompatChatRequestCompiler(
         attachment: ChatAttachment,
     ): String? {
         val sourceFile = resolveAttachmentFile(attachment) ?: return null
+        if (sourceFile.length() > MAX_ATTACHMENT_BYTES) return null
         val encoded = runCatching {
             Base64.encodeToString(sourceFile.readBytes(), Base64.NO_WRAP)
         }.getOrNull() ?: return null
@@ -635,6 +638,7 @@ class VcpCompatChatRequestCompiler(
 
     private companion object {
         const val PENDING_USER_MESSAGE_ID = "__pending_user__"
+        const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024 // 20 MB
         val SUPPORTED_AUDIO_TYPES = setOf(
             "audio/wav",
             "audio/mpeg",
@@ -665,23 +669,28 @@ private fun AppSettings.toContextFoldingOptions(): ContextFoldingOptions =
         maxSummaryEntries = contextFoldingMaxSummaryEntries,
     )
 
+private val compiledRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex?>()
+private val REGEX_LITERAL_PATTERN = Regex("^/(.+)/([a-zA-Z]*)$")
+
 private fun String.toRegexOrNull(): Regex? =
-    runCatching {
-        val regexMatch = Regex("^/(.+)/([a-zA-Z]*)$").matchEntire(this)
-        if (regexMatch != null) {
-            val pattern = regexMatch.groupValues[1]
-            val options = regexMatch.groupValues[2]
-                .mapNotNull { flag ->
-                    when (flag.lowercaseChar()) {
-                        'i' -> RegexOption.IGNORE_CASE
-                        'm' -> RegexOption.MULTILINE
-                        's' -> RegexOption.DOT_MATCHES_ALL
-                        else -> null
+    compiledRegexCache.getOrPut(this) {
+        runCatching {
+            val regexMatch = REGEX_LITERAL_PATTERN.matchEntire(this)
+            if (regexMatch != null) {
+                val pattern = regexMatch.groupValues[1]
+                val options = regexMatch.groupValues[2]
+                    .mapNotNull { flag ->
+                        when (flag.lowercaseChar()) {
+                            'i' -> RegexOption.IGNORE_CASE
+                            'm' -> RegexOption.MULTILINE
+                            's' -> RegexOption.DOT_MATCHES_ALL
+                            else -> null
+                        }
                     }
-                }
-                .toSet()
-            Regex(pattern, options)
-        } else {
-            Regex(this)
-        }
-    }.getOrNull()
+                    .toSet()
+                Regex(pattern, options)
+            } else {
+                Regex(this)
+            }
+        }.getOrNull()
+    }

@@ -33,10 +33,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -66,6 +64,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -84,7 +83,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +104,7 @@ import com.vcpnative.app.chat.compiler.ChatRequestCompiler
 import com.vcpnative.app.chat.render.ChatMessageReaderContent
 import com.vcpnative.app.chat.render.ChatMessageContent
 import com.vcpnative.app.chat.render.ChatRenderMode
+import com.vcpnative.app.chat.render.LocalImageViewerCallback
 import com.vcpnative.app.chat.render.shouldUseBrowserHtmlRenderer
 import com.vcpnative.app.chat.summary.TopicSummarizer
 import com.vcpnative.app.chat.session.StreamSessionManager
@@ -668,6 +667,7 @@ fun ChatRoute(
     onOpenAgentEditor: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAttachment: (String) -> Unit,
+    onOpenImageViewer: (imageUrl: String, alt: String?) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val viewModel: ChatViewModel = viewModel(
@@ -706,39 +706,45 @@ fun ChatRoute(
         }
     }
 
-    ChatScreen(
-        composerSessionKey = topicId,
-        title = topicTitle ?: topicId,
-        subtitle = agentName ?: agentId,
-        messages = messages,
-        attachmentsByMessageId = attachmentsByMessageId,
-        pendingAttachments = pendingAttachments,
-        isSending = isSending,
-        onNavigateBack = onNavigateBack,
-        onOpenTopics = onOpenTopics,
-        onCreateTopic = {
-            routeScope.launch {
-                val topic = appContainer.workspaceRepository.createPlaceholderTopic(agentId)
-                onOpenTopic(topic.id)
-            }
+    CompositionLocalProvider(
+        LocalImageViewerCallback provides { request ->
+            onOpenImageViewer(request.url, request.alt)
         },
-        onOpenAgentEditor = onOpenAgentEditor,
-        onOpenSettings = onOpenSettings,
-        onSendMessage = viewModel::sendMessage,
-        onRetryAssistantMessage = viewModel::regenerateAssistantMessage,
-        onEditAssistantMessage = viewModel::editAssistantMessage,
-        onDeleteAssistantMessage = viewModel::deleteAssistantMessage,
-        onCreateBranchFromMessage = { messageId ->
-            viewModel.createBranchFromMessage(messageId).map { newTopicId ->
-                onOpenTopic(newTopicId)
-            }
-        },
-        onInterruptAssistantMessage = viewModel::interruptMessage,
-        onInterrupt = viewModel::interrupt,
-        onPickAttachments = { attachmentPicker.launch(arrayOf("*/*")) },
-        onRemovePendingAttachment = viewModel::removePendingAttachment,
-        onOpenAttachment = onOpenAttachment,
-    )
+    ) {
+        ChatScreen(
+            composerSessionKey = topicId,
+            title = topicTitle ?: topicId,
+            subtitle = agentName ?: agentId,
+            messages = messages,
+            attachmentsByMessageId = attachmentsByMessageId,
+            pendingAttachments = pendingAttachments,
+            isSending = isSending,
+            onNavigateBack = onNavigateBack,
+            onOpenTopics = onOpenTopics,
+            onCreateTopic = {
+                routeScope.launch {
+                    val topic = appContainer.workspaceRepository.createPlaceholderTopic(agentId)
+                    onOpenTopic(topic.id)
+                }
+            },
+            onOpenAgentEditor = onOpenAgentEditor,
+            onOpenSettings = onOpenSettings,
+            onSendMessage = viewModel::sendMessage,
+            onRetryAssistantMessage = viewModel::regenerateAssistantMessage,
+            onEditAssistantMessage = viewModel::editAssistantMessage,
+            onDeleteAssistantMessage = viewModel::deleteAssistantMessage,
+            onCreateBranchFromMessage = { messageId ->
+                viewModel.createBranchFromMessage(messageId).map { newTopicId ->
+                    onOpenTopic(newTopicId)
+                }
+            },
+            onInterruptAssistantMessage = viewModel::interruptMessage,
+            onInterrupt = viewModel::interrupt,
+            onPickAttachments = { attachmentPicker.launch(arrayOf("*/*")) },
+            onRemovePendingAttachment = viewModel::removePendingAttachment,
+            onOpenAttachment = onOpenAttachment,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -767,51 +773,24 @@ private fun ChatScreen(
     onRemovePendingAttachment: (String) -> Unit,
     onOpenAttachment: (String) -> Unit,
 ) {
-    val listState = rememberLazyListState()
+    val scrollState = rememberScrollState()
     val bubbleSpeechController = rememberBubbleSpeechController()
-    val density = LocalDensity.current
-    val autoFollowThresholdPx = remember(density) { with(density) { 96.dp.roundToPx() } }
     var autoFollowBottom by rememberSaveable { mutableStateOf(true) }
     var composerFocused by remember { mutableStateOf(false) }
     ChatPerformanceMetricsState(isSending = isSending)
     val latestCompletedAssistantMessageId = remember(messages) {
         messages.lastOrNull { it.role == "assistant" && it.status !in setOf("draft", "streaming") }?.id
     }
-    val isNearBottom by remember(listState, autoFollowThresholdPx, messages.size) {
+    val isNearBottom by remember(scrollState) {
         derivedStateOf {
-            isNearChatBottom(
-                listState = listState,
-                lastIndex = messages.size,
-                thresholdPx = autoFollowThresholdPx,
-            )
+            val max = scrollState.maxValue
+            max == 0 || (max - scrollState.value) < 300
         }
     }
 
-    // 方案 B：滚动时全局暂停动态内容，停止后 200ms 恢复
-    var scrollPaused by remember { mutableStateOf(false) }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }
-            .collect { scrolling ->
-                if (scrolling) {
-                    scrollPaused = true
-                } else {
-                    kotlinx.coroutines.delay(200)
-                    scrollPaused = false
-                }
-            }
-    }
-
-    // 方案 A：可见性检测 — 获取当前可见 item 的 key 集合
-    val visibleMessageIds by remember {
-        derivedStateOf {
-            listState.layoutInfo.visibleItemsInfo
-                .mapNotNull { it.key as? String }
-                .toSet()
-        }
-    }
-
-    LaunchedEffect(listState, autoFollowThresholdPx, messages.size) {
-        snapshotFlow { listState.isScrollInProgress to isNearBottom }
+    // 跟踪用户手动滚动
+    LaunchedEffect(scrollState) {
+        snapshotFlow { scrollState.isScrollInProgress to isNearBottom }
             .collect { (scrolling, nearBottom) ->
                 when {
                     scrolling -> autoFollowBottom = nearBottom
@@ -820,50 +799,17 @@ private fun ChatScreen(
             }
     }
 
-    LaunchedEffect(
-        messages.lastOrNull()?.id,
-        messages.lastOrNull()?.content,
-        messages.lastOrNull()?.status,
-        autoFollowBottom,
-        composerFocused,
-    ) {
+    // 自动跟随到底部
+    LaunchedEffect(messages.size, messages.lastOrNull()?.status, messages.lastOrNull()?.id) {
         if (messages.isEmpty() || !autoFollowBottom || composerFocused) {
             return@LaunchedEffect
         }
-
         val lastMessage = messages.last()
         if (lastMessage.status in setOf("draft", "streaming")) {
-            // 流式消息：滚到列表绝对底部（footer item），而不是最后一条消息的顶部
-            listState.scrollToItem(messages.size)
+            scrollState.scrollTo(scrollState.maxValue)
         } else {
-            listState.animateScrollToItem(messages.size)
-        }
-    }
-
-    LaunchedEffect(listState, autoFollowBottom, messages.lastOrNull()?.id, composerFocused) {
-        if (messages.isEmpty() || !autoFollowBottom || composerFocused) {
-            return@LaunchedEffect
-        }
-
-        snapshotFlow {
-            val layoutInfo = listState.layoutInfo
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
-            Triple(
-                layoutInfo.totalItemsCount,
-                lastVisible?.index ?: -1,
-                lastVisible?.let { it.offset + it.size - layoutInfo.viewportEndOffset } ?: Int.MIN_VALUE,
-            )
-        }.collect {
-            if (listState.isScrollInProgress) {
-                return@collect
-            }
-
-            val gapToBottom = distanceToChatBottom(
-                listState = listState,
-                lastIndex = messages.size,
-            )
-            if (gapToBottom > 0) {
-                listState.scrollToItem(messages.size)
+            if (scrollState.maxValue > scrollState.value) {
+                scrollState.animateScrollTo(scrollState.maxValue)
             }
         }
     }
@@ -877,7 +823,7 @@ private fun ChatScreen(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
                                 MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.tertiary
+                                MaterialTheme.colorScheme.secondary
                             )
                         )
                     )
@@ -977,54 +923,48 @@ private fun ChatScreen(
                 }
                 Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = "准备好开始对话了吗？",
+                    text = "准备好了吗~",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "在下方输入你的第一条消息，\n开启一段奇妙的冒险对话吧！",
+                    text = "在下方输入你的消息，\n开始对话吧~",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
             }
         } else {
-            LazyColumn(
-                state = listState,
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
-                contentPadding = PaddingValues(16.dp),
+                    .padding(innerPadding)
+                    .verticalScroll(scrollState)
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(
-                    items = messages,
-                    key = { it.id },
-                    contentType = { messageBubbleContentType(it) },
-                ) { message ->
-                    MessageBubble(
-                        message = message,
-                        attachments = attachmentsByMessageId[message.id].orEmpty(),
-                        canRegenerateAssistant = !isSending && message.id == latestCompletedAssistantMessageId,
-                        isSending = isSending,
-                        pauseDynamicContent = message.id !in visibleMessageIds,
-                        onSendMessage = onSendMessage,
-                        onRetryAssistantMessage = onRetryAssistantMessage,
-                        onEditAssistantMessage = onEditAssistantMessage,
-                        onDeleteAssistantMessage = onDeleteAssistantMessage,
-                        onCreateBranchFromMessage = onCreateBranchFromMessage,
-                        onSpeakAssistantMessage = bubbleSpeechController::speak,
-                        onInterruptAssistantMessage = onInterruptAssistantMessage,
-                        onOpenTopics = onOpenTopics,
-                        onCreateTopic = onCreateTopic,
-                        onOpenAttachment = onOpenAttachment,
-                    )
-                }
-                // 底部锚点：自动滚动目标，确保能滚到最后一条消息的最底部
-                item(key = "_bottom_anchor") {
-                    Spacer(modifier = Modifier.height(1.dp))
+                messages.forEach { message ->
+                    key(message.id) {
+                        MessageBubble(
+                            message = message,
+                            attachments = attachmentsByMessageId[message.id].orEmpty(),
+                            canRegenerateAssistant = !isSending && message.id == latestCompletedAssistantMessageId,
+                            isSending = isSending,
+                            pauseDynamicContent = false,
+                            onSendMessage = onSendMessage,
+                            onRetryAssistantMessage = onRetryAssistantMessage,
+                            onEditAssistantMessage = onEditAssistantMessage,
+                            onDeleteAssistantMessage = onDeleteAssistantMessage,
+                            onCreateBranchFromMessage = onCreateBranchFromMessage,
+                            onSpeakAssistantMessage = bubbleSpeechController::speak,
+                            onInterruptAssistantMessage = onInterruptAssistantMessage,
+                            onOpenTopics = onOpenTopics,
+                            onCreateTopic = onCreateTopic,
+                            onOpenAttachment = onOpenAttachment,
+                        )
+                    }
                 }
             }
         }
@@ -1137,6 +1077,7 @@ private fun ChatComposerBar(
             } else {
                 FloatingActionButton(
                     onClick = {
+                        if (!sendEnabled) return@FloatingActionButton
                         val snapshot = draft
                         draft = ""
                         onSendMessage(snapshot)
@@ -1165,41 +1106,6 @@ private fun ChatComposerBar(
     }
 }
 
-private fun isNearChatBottom(
-    listState: LazyListState,
-    lastIndex: Int,
-    thresholdPx: Int,
-): Boolean {
-    if (lastIndex < 0) {
-        return true
-    }
-
-    val layoutInfo = listState.layoutInfo
-    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
-    if (lastVisible.index < lastIndex) {
-        return false
-    }
-
-    val overflowPx = lastVisible.offset + lastVisible.size - layoutInfo.viewportEndOffset
-    return overflowPx <= thresholdPx
-}
-
-private fun distanceToChatBottom(
-    listState: LazyListState,
-    lastIndex: Int,
-): Int {
-    if (lastIndex < 0) {
-        return 0
-    }
-
-    val layoutInfo = listState.layoutInfo
-    val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return 0
-    return if (lastVisible.index < lastIndex) {
-        Int.MAX_VALUE
-    } else {
-        maxOf(0, lastVisible.offset + lastVisible.size - layoutInfo.viewportEndOffset)
-    }
-}
 
 @Composable
 private fun MessageBubble(
@@ -1269,9 +1175,9 @@ private fun MessageBubble(
         PaddingValues(16.dp)
     }
     val bubbleShape = when {
-        message.role == "user" -> RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp)
-        isBrowserHtmlMessage -> RoundedCornerShape(20.dp)
-        else -> RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
+        message.role == "user" -> RoundedCornerShape(24.dp, 24.dp, 6.dp, 24.dp)
+        isBrowserHtmlMessage -> RoundedCornerShape(24.dp)
+        else -> RoundedCornerShape(24.dp, 24.dp, 24.dp, 6.dp)
     }
     val showRoleLabel = !(message.role == "assistant" && isBrowserHtmlMessage)
     val isStreamingMessage = isStreamingMessage(message)
@@ -1282,16 +1188,17 @@ private fun MessageBubble(
     val plainTextContent = remember(message.content, displayContent) {
         extractPlainTextForActions(message.content.ifBlank { displayContent })
     }
-    var menuExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
-    var editDialogOpen by rememberSaveable(message.id) { mutableStateOf(false) }
-    var deleteDialogOpen by rememberSaveable(message.id) { mutableStateOf(false) }
-    var readerDialogOpen by rememberSaveable(message.id) { mutableStateOf(false) }
+    var menuExpanded by remember(message.id) { mutableStateOf(false) }
+    var activeDialog by remember(message.id) { mutableStateOf<String?>(null) }
+    val editDialogOpen = activeDialog == "edit"
+    val deleteDialogOpen = activeDialog == "delete"
+    val readerDialogOpen = activeDialog == "reader"
     var actionInProgress by remember(message.id) { mutableStateOf(false) }
     var editDraft by remember(message.id) { mutableStateOf(message.content) }
     var editError by remember(message.id) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(message.id, message.content, editDialogOpen) {
-        if (!editDialogOpen) {
+    LaunchedEffect(message.id, message.content, activeDialog) {
+        if (activeDialog != "edit") {
             editDraft = message.content
             editError = null
         }
@@ -1342,7 +1249,7 @@ private fun MessageBubble(
                 if (showRoleLabel) {
                     Spacer(modifier = Modifier.height(6.dp))
                 }
-                key(message.id, message.status) {
+                key(message.id) {
                     ChatMessageContent(
                         content = displayContent,
                         mode = if (isStreamingMessage) {
@@ -1399,7 +1306,7 @@ private fun MessageBubble(
                         onClick = {
                             editDraft = message.content
                             editError = null
-                            editDialogOpen = true
+                            activeDialog = "edit"
                             menuExpanded = false
                         },
                     )
@@ -1444,7 +1351,7 @@ private fun MessageBubble(
                     DropdownMenuItem(
                         text = { Text("阅读模式") },
                         onClick = {
-                            readerDialogOpen = true
+                            activeDialog = "reader"
                             menuExpanded = false
                         },
                     )
@@ -1486,7 +1393,7 @@ private fun MessageBubble(
                         text = { Text("删除消息") },
                         enabled = canDeleteAssistant && !actionInProgress,
                         onClick = {
-                            deleteDialogOpen = true
+                            activeDialog = "delete"
                             menuExpanded = false
                         },
                     )
@@ -1513,7 +1420,7 @@ private fun MessageBubble(
         AlertDialog(
             onDismissRequest = {
                 if (!actionInProgress) {
-                    editDialogOpen = false
+                    activeDialog = null
                 }
             },
             title = { Text("编辑消息") },
@@ -1547,7 +1454,7 @@ private fun MessageBubble(
                             val result = onEditAssistantMessage(message.id, editDraft)
                             actionInProgress = false
                             result.onSuccess {
-                                editDialogOpen = false
+                                activeDialog = null
                                 Toast.makeText(context, "已保存消息", Toast.LENGTH_SHORT).show()
                             }.onFailure { error ->
                                 editError = error.message ?: "保存失败"
@@ -1562,7 +1469,7 @@ private fun MessageBubble(
                 TextButton(
                     enabled = !actionInProgress,
                     onClick = {
-                        editDialogOpen = false
+                        activeDialog = null
                     },
                 ) {
                     Text("取消")
@@ -1575,7 +1482,7 @@ private fun MessageBubble(
         AlertDialog(
             onDismissRequest = {
                 if (!actionInProgress) {
-                    deleteDialogOpen = false
+                    activeDialog = null
                 }
             },
             title = { Text("删除消息") },
@@ -1594,7 +1501,7 @@ private fun MessageBubble(
                             val result = onDeleteAssistantMessage(message.id)
                             actionInProgress = false
                             result.onSuccess {
-                                deleteDialogOpen = false
+                                activeDialog = null
                                 Toast.makeText(context, "已删除消息", Toast.LENGTH_SHORT).show()
                             }.onFailure { error ->
                                 Toast.makeText(
@@ -1613,7 +1520,7 @@ private fun MessageBubble(
                 TextButton(
                     enabled = !actionInProgress,
                     onClick = {
-                        deleteDialogOpen = false
+                        activeDialog = null
                     },
                 ) {
                     Text("取消")
@@ -1631,7 +1538,7 @@ private fun MessageBubble(
             } else {
                 null
             },
-            onDismiss = { readerDialogOpen = false },
+            onDismiss = { activeDialog = null },
             onCopyRaw = {
                 copyMessageContentToClipboard(
                     context = context,
@@ -1785,19 +1692,10 @@ private fun extractPlainTextForActions(content: String): String {
 private fun isStreamingMessage(message: MessageEntity): Boolean =
     message.role == "assistant" && message.status in setOf("draft", "streaming")
 
-private fun messageBubbleContentType(message: MessageEntity): String =
-    when {
-        message.role == "user" -> "user"
-        message.role == "assistant" && shouldUseBrowserHtmlRenderer(message.content) -> "assistant_browser_html"
-        message.role == "assistant" -> "assistant_text"
-        shouldUseBrowserHtmlRenderer(message.content) -> "system_browser_html"
-        else -> message.role
-    }
-
 private class BubbleSpeechController(context: Context) {
     private val appContext = context.applicationContext
-    private var ready = false
-    private var textToSpeech: TextToSpeech? = null
+    @Volatile private var ready = false
+    @Volatile private var textToSpeech: TextToSpeech? = null
 
     init {
         textToSpeech = TextToSpeech(appContext) { status ->

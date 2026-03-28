@@ -41,7 +41,7 @@ class VcpToolBoxStreamSessionManager(
         emit(StreamSessionEvent.Started)
 
         val serviceConfig = VcpServiceConfig(
-            baseUrl = compiledRequest.endpoint,
+            baseUrl = compiledRequest.apiBaseUrl ?: compiledRequest.endpoint,
             apiKey = compiledRequest.apiKey,
         )
         val request = Request.Builder()
@@ -63,7 +63,7 @@ class VcpToolBoxStreamSessionManager(
             }
         }
 
-        var partialText = ""
+        val partialTextBuilder = StringBuilder()
         var hasTerminalEvent = false
 
         try {
@@ -72,7 +72,7 @@ class VcpToolBoxStreamSessionManager(
                     hasTerminalEvent = true
                     emit(
                         StreamSessionEvent.Failed(
-                            partialText = partialText,
+                            partialText = partialTextBuilder.toString(),
                             message = extractErrorMessage(response.code, response.body.string()),
                         ),
                     )
@@ -102,7 +102,7 @@ class VcpToolBoxStreamSessionManager(
                     when {
                         frame.isDone -> {
                             hasTerminalEvent = true
-                            emit(StreamSessionEvent.Completed(fullText = partialText))
+                            emit(StreamSessionEvent.Completed(fullText = partialTextBuilder.toString()))
                             return@flow
                         }
 
@@ -110,7 +110,7 @@ class VcpToolBoxStreamSessionManager(
                             hasTerminalEvent = true
                             emit(
                                 StreamSessionEvent.Failed(
-                                    partialText = partialText,
+                                    partialText = partialTextBuilder.toString(),
                                     message = chunkResult.errorMessage,
                                 ),
                             )
@@ -118,7 +118,7 @@ class VcpToolBoxStreamSessionManager(
                         }
 
                         !chunkResult.deltaText.isNullOrEmpty() -> {
-                            partialText += chunkResult.deltaText
+                            partialTextBuilder.append(chunkResult.deltaText)
                             emit(StreamSessionEvent.TextDelta(chunkResult.deltaText))
                         }
                     }
@@ -127,7 +127,7 @@ class VcpToolBoxStreamSessionManager(
                 parser.flush()?.let { frame ->
                     if (frame.isDone) {
                         hasTerminalEvent = true
-                        emit(StreamSessionEvent.Completed(fullText = partialText))
+                        emit(StreamSessionEvent.Completed(fullText = partialTextBuilder.toString()))
                         return@flow
                     }
 
@@ -137,7 +137,7 @@ class VcpToolBoxStreamSessionManager(
                             hasTerminalEvent = true
                             emit(
                                 StreamSessionEvent.Failed(
-                                    partialText = partialText,
+                                    partialText = partialTextBuilder.toString(),
                                     message = chunkResult.errorMessage,
                                 ),
                             )
@@ -145,7 +145,7 @@ class VcpToolBoxStreamSessionManager(
                         }
 
                         !chunkResult.deltaText.isNullOrEmpty() -> {
-                            partialText += chunkResult.deltaText
+                            partialTextBuilder.append(chunkResult.deltaText)
                             emit(StreamSessionEvent.TextDelta(chunkResult.deltaText))
                         }
                     }
@@ -153,7 +153,7 @@ class VcpToolBoxStreamSessionManager(
             }
 
             if (!hasTerminalEvent) {
-                emit(StreamSessionEvent.Completed(fullText = partialText))
+                emit(StreamSessionEvent.Completed(fullText = partialTextBuilder.toString()))
             }
         } catch (error: Throwable) {
             if (error is CancellationException) {
@@ -162,6 +162,7 @@ class VcpToolBoxStreamSessionManager(
 
             val interrupted = activeRequest.interrupted.get() ||
                 (error is IOException && error.message?.contains("Canceled", ignoreCase = true) == true)
+            val partialText = partialTextBuilder.toString()
             emit(
                 if (interrupted) {
                     StreamSessionEvent.Interrupted(partialText = partialText)
@@ -174,6 +175,7 @@ class VcpToolBoxStreamSessionManager(
             )
         } finally {
             activeRequests.remove(compiledRequest.requestId)
+            runCatching { call.cancel() }
         }
     }.flowOn(Dispatchers.IO)
 
@@ -303,21 +305,24 @@ class VcpToolBoxStreamSessionManager(
     }
 
     private fun extractJsonError(json: JSONObject): String? {
-        val directError = json.optString("error").takeIf { it.isNotBlank() }
-        val directMessage = json.optString("message").takeIf { it.isNotBlank() }
-        if (directError != null && directMessage != null && directMessage != directError) {
-            return "$directError: $directMessage"
+        // Check for explicit "error" field first (string or object)
+        val errorValue = json.opt("error")
+        when (errorValue) {
+            is String -> if (errorValue.isNotBlank()) {
+                val directMessage = json.optString("message").takeIf { it.isNotBlank() }
+                return if (directMessage != null && directMessage != errorValue) {
+                    "$errorValue: $directMessage"
+                } else {
+                    errorValue
+                }
+            }
+            is JSONObject -> {
+                val errorMessage = errorValue.optString("message").takeIf { it.isNotBlank() }
+                return errorMessage ?: errorValue.toString()
+            }
         }
-        if (directError != null) {
-            return directError
-        }
-        if (directMessage != null) {
-            return directMessage
-        }
-
-        val errorObject = json.optJSONObject("error") ?: return null
-        val errorMessage = errorObject.optString("message").takeIf { it.isNotBlank() }
-        return errorMessage ?: errorObject.toString()
+        // Do NOT treat a standalone "message" field as an error — it may be a normal response field
+        return null
     }
 
     private fun extractJsonText(json: JSONObject): String? {

@@ -59,6 +59,7 @@ data class CompiledChatRequest(
     val topicId: String,
     val requestId: String,
     val endpoint: String,
+    val apiBaseUrl: String? = null,
     val apiKey: String,
     val model: String = "gemini-pro",
     val temperature: Double = 0.7,

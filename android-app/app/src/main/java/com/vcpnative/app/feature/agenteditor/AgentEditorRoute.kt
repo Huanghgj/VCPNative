@@ -482,7 +482,7 @@ private fun AgentEditorScreen(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
                                 MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.tertiary
+                                MaterialTheme.colorScheme.secondary
                             )
                         )
                     )
@@ -491,7 +491,7 @@ private fun AgentEditorScreen(
                     title = {
                         Column {
                             Text(
-                                text = "Agent 设定工坊 ✨",
+                                text = "Agent 设定",
                                 fontWeight = FontWeight.Black
                             )
                             if (uiState.agentId.isNotBlank()) {
@@ -578,7 +578,7 @@ private fun AgentEditorScreen(
                 return@Column
             }
 
-            SectionCard(title = "🎀 基础设定") {
+            SectionCard(title = "基础设定") {
                 OutlinedTextField(
                     value = uiState.name,
                     onValueChange = onNameChange,
@@ -692,7 +692,7 @@ private fun AgentEditorScreen(
                 }
             }
 
-            SectionCard(title = "🪄 灵魂注入 (Prompt)") {
+            SectionCard(title = "Prompt 设定") {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f)),
