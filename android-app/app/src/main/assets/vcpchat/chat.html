@@ -664,9 +664,11 @@ window.toggleHtmlPreview=function(id){
     if(codeBlock)codeBlock.style.display='';
     btn.textContent='▶️ 运行';
   } else {
+    // 源码来源：<code> 元素的 textContent，或 dataset.src（从 html-render 提取的）
     var code=container.querySelector('code');
-    if(code){
-      iframe.srcdoc=code.textContent;
+    var src=code?code.textContent:(container.dataset.src||'');
+    if(src){
+      iframe.srcdoc=src;
       iframe.style.display='block';
       if(codeBlock)codeBlock.style.display='none';
       iframe.onload=function(){
@@ -713,34 +715,50 @@ function processButtons(container){
 
 // 后处理：扫描 DOM 中的完整 HTML 文档并添加预览按钮
 function processHtmlPreviews(container){
-  // 找所有 <code> 块，检测里面是否有完整 HTML
-  var codes=container.querySelectorAll('code:not([data-preview-checked])');
-  codes.forEach(function(code){
-    code.setAttribute('data-preview-checked','1');
-    var text=code.textContent||'';
+  // 扫描所有可能包含完整 HTML 文档的元素：
+  // <code>、<pre>、以及 monospace 字体的 <div>（AI 经常用 inline style 输出代码）
+  var candidates=container.querySelectorAll('code:not([data-hp]),pre:not([data-hp])');
+  candidates.forEach(function(el){checkAndWrapPreview(el)});
+
+  // 也扫描 html-render 里的文本内容（AI 用 <div style="monospace"> 包裹代码的情况）
+  var renders=container.querySelectorAll('.html-render:not([data-hp])');
+  renders.forEach(function(el){
+    el.setAttribute('data-hp','1');
+    var text=el.textContent||'';
     if(!/<!DOCTYPE\s+html|<html[\s>]/i.test(text))return;
-    if(text.length<50)return; // 太短的忽略
-    // 找到包含这个 code 的 pre 或 code-block
-    var wrapper=code.closest('.code-block')||code.closest('pre');
-    if(!wrapper||wrapper.querySelector('.html-preview-bar'))return;
-    // 包装成预览容器
-    var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
-    var preview=document.createElement('div');
-    preview.className='html-preview';
-    preview.id=id;
-    // 创建工具栏
-    var bar=document.createElement('div');
-    bar.className='html-preview-bar';
-    bar.innerHTML='<span>HTML 文档</span><button onclick="toggleHtmlPreview(\''+id+'\')">▶️ 运行</button>';
-    // 创建 iframe
-    var iframe=document.createElement('iframe');
-    iframe.sandbox='allow-scripts allow-same-origin';
-    // 替换原始元素
-    wrapper.parentNode.insertBefore(preview,wrapper);
-    preview.appendChild(bar);
-    preview.appendChild(wrapper);
-    preview.appendChild(iframe);
+    if(text.length<100)return;
+    // 提取 HTML 源码（可能被 &lt; &gt; 转义显示）
+    wrapAsPreview(el,text);
   });
+}
+
+function checkAndWrapPreview(el){
+  el.setAttribute('data-hp','1');
+  var text=el.textContent||'';
+  if(!/<!DOCTYPE\s+html|<html[\s>]/i.test(text))return;
+  if(text.length<100)return;
+  var wrapper=el.closest('.code-block')||el.closest('pre')||el;
+  if(wrapper.querySelector('.html-preview-bar'))return;
+  wrapAsPreview(wrapper,text);
+}
+
+function wrapAsPreview(wrapper,htmlSource){
+  var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
+  var preview=document.createElement('div');
+  preview.className='html-preview';
+  preview.id=id;
+  // 保存源码供 iframe 使用
+  preview.dataset.src=htmlSource;
+  var bar=document.createElement('div');
+  bar.className='html-preview-bar';
+  bar.innerHTML='<span>HTML 文档</span><button onclick="toggleHtmlPreview(\''+id+'\')">▶️ 运行</button>';
+  var iframe=document.createElement('iframe');
+  iframe.sandbox='allow-scripts allow-same-origin';
+  iframe.style.display='none';
+  wrapper.parentNode.insertBefore(preview,wrapper);
+  preview.appendChild(bar);
+  preview.appendChild(wrapper);
+  preview.appendChild(iframe);
 }
 
 // 每次消息渲染后处理按钮 + HTML 预览
