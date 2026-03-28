@@ -36,6 +36,8 @@ data class VcpLogMessage(
     val requestId: String? = null,
     val toolName: String? = null,
     val maidName: String? = null,
+    /** 原始 WebSocket JSON — 灵视中心需要完整结构化数据 */
+    val rawJson: String? = null,
 )
 
 /**
@@ -213,8 +215,10 @@ class VcpLogClient(
             }
 
             if (message != null) {
-                val emitted = _messages.tryEmit(message)
-                Log.d(TAG, "$source emit ${message.type}/${message.title} (ok=$emitted, subs=${_messages.subscriptionCount.value})")
+                // 保存原始 JSON，灵视中心需要完整结构
+                val withRaw = message.copy(rawJson = raw)
+                val emitted = _messages.tryEmit(withRaw)
+                Log.d(TAG, "$source emit ${withRaw.type}/${withRaw.title} (ok=$emitted, subs=${_messages.subscriptionCount.value})")
             }
         }.onFailure {
             Log.w(TAG, "$source parse failed: ${raw.take(200)}", it)

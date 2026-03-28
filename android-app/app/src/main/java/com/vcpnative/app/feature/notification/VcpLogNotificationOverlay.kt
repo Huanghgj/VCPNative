@@ -835,25 +835,27 @@ private fun RagObserverWebView(
     }
 }
 
-/** 推送所有历史消息到灵视中心 */
+/** Base64 → UTF-8 解码 JS */
+private fun b64DecJs(b64: String) =
+    "(function(){var s=atob('$b64');var b=new Uint8Array(s.length);for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);return new TextDecoder().decode(b)})()"
+
+/** 推送所有历史消息到灵视中心（使用原始 JSON） */
 private fun pushAllToObserver(
     webView: WebView,
     notifications: List<VcpLogMessage>,
     pushedCount: IntArray,
 ) {
     if (notifications.isEmpty()) return
-    val jsonArray = org.json.JSONArray()
-    for (msg in notifications) {
-        jsonArray.put(msgToJson(msg))
+    val sb = StringBuilder("[")
+    notifications.forEachIndexed { i, msg ->
+        if (i > 0) sb.append(",")
+        sb.append(msgRawJson(msg))
     }
+    sb.append("]")
     val b64 = android.util.Base64.encodeToString(
-        jsonArray.toString().toByteArray(Charsets.UTF_8),
-        android.util.Base64.NO_WRAP,
+        sb.toString().toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP,
     )
-    webView.evaluateJavascript(
-        "(function(){var s=atob('$b64');var b=new Uint8Array(s.length);for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);pushHistory(new TextDecoder().decode(b))})();",
-        null,
-    )
+    webView.evaluateJavascript("pushHistory(${b64DecJs(b64)});", null)
     pushedCount[0] = notifications.size
 }
 
@@ -866,15 +868,11 @@ private fun pushNewToObserver(
     val start = pushedCount[0]
     if (start >= notifications.size) return
     for (i in start until notifications.size) {
-        val json = msgToJson(notifications[i])
+        val raw = msgRawJson(notifications[i])
         val b64 = android.util.Base64.encodeToString(
-            json.toString().toByteArray(Charsets.UTF_8),
-            android.util.Base64.NO_WRAP,
+            raw.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP,
         )
-        webView.evaluateJavascript(
-            "(function(){var s=atob('$b64');var b=new Uint8Array(s.length);for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);pushMessage(new TextDecoder().decode(b))})();",
-            null,
-        )
+        webView.evaluateJavascript("pushMessage(${b64DecJs(b64)});", null)
     }
     pushedCount[0] = notifications.size
 }
@@ -890,33 +888,15 @@ private fun syncConnectionStatus(webView: WebView, status: VcpLogConnectionStatu
     webView.evaluateJavascript("if(window.setConnectionStatus)setConnectionStatus('$s','$msg');", null)
 }
 
-/** 将 VcpLogMessage 转为 observer.html 能理解的 JSON */
-private fun msgToJson(msg: VcpLogMessage): org.json.JSONObject {
+/** 获取消息的原始 JSON 字符串（灵视中心需要完整结构） */
+private fun msgRawJson(msg: VcpLogMessage): String {
+    // 优先使用保存的原始 WebSocket 载荷
+    if (!msg.rawJson.isNullOrBlank()) return msg.rawJson
+    // 回退：手动构建
     return org.json.JSONObject().apply {
         put("type", msg.type)
-        put("timestamp", msg.timestamp)
-        when (msg.type) {
-            "vcp_log" -> {
-                put("data", org.json.JSONObject().apply {
-                    put("tool_name", msg.toolName ?: "")
-                    put("status", "")
-                    put("content", msg.content)
-                    put("MaidName", msg.maidName ?: "")
-                })
-            }
-            "tool_approval_request" -> {
-                put("data", org.json.JSONObject().apply {
-                    put("requestId", msg.requestId ?: "")
-                    put("toolName", msg.toolName ?: "")
-                    put("maid", msg.maidName ?: "")
-                    put("args", msg.content)
-                })
-            }
-            else -> {
-                put("message", msg.content)
-                put("dbName", msg.toolName ?: "")
-                put("action", msg.title)
-            }
-        }
-    }
+        put("message", msg.content)
+        put("toolName", msg.toolName ?: "")
+        put("maidName", msg.maidName ?: "")
+    }.toString()
 }
