@@ -73,7 +73,7 @@ function patchThreeJS() {
         let associatedCamera = null;
 
         renderer.render = function(scene, camera) {
-            if (this._disposed) {
+            if (this._disposed || this._contextLost) {
                 return;
             }
             
@@ -106,6 +106,17 @@ function patchThreeJS() {
                 return originalDispose.call(this);
             }
         };
+
+        // Handle WebGL context loss / restore (critical on Android)
+        renderer.domElement.addEventListener('webglcontextlost', (event) => {
+            event.preventDefault();
+            console.warn('[Three.js Safety] WebGL context lost');
+            renderer._contextLost = true;
+        });
+        renderer.domElement.addEventListener('webglcontextrestored', () => {
+            console.log('[Three.js Safety] WebGL context restored');
+            renderer._contextLost = false;
+        });
 
         const observer = new MutationObserver(() => {
             if (document.body.contains(renderer.domElement)) {

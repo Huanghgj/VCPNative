@@ -104,6 +104,7 @@ class AppContainer(
     val streamSessionManager: StreamSessionManager by lazy {
         VcpToolBoxStreamSessionManager(
             okHttpClient = okHttpClient,
+            boundedHttpClient = boundedHttpClient,
         )
     }
 

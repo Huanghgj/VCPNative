@@ -101,6 +101,9 @@ private fun createModuleWebView(
         overScrollMode = View.OVER_SCROLL_NEVER
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
+        // Ensure hardware-accelerated rendering for WebGL / Three.js content
+        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.allowFileAccess = true

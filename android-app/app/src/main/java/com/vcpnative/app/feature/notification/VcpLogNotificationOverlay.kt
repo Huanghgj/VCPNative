@@ -240,30 +240,39 @@ fun VcpLogSidebarPanel(
     onApprove: (String) -> Unit,
     onReject: (String) -> Unit,
 ) {
-    if (!visible) return
-
-    // 遮罩
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.35f))
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-            ) { onDismiss() },
-    )
-
-    // 面板
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.CenterEnd,
+    // 遮罩（淡入淡出）
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(),
+        exit = fadeOut(),
     ) {
-        Column(
+        Box(
             modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(0.88f)
-                .background(MaterialTheme.colorScheme.background)
-                .statusBarsPadding(),
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.35f))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                ) { onDismiss() },
+        )
+    }
+
+    // 面板（从右侧滑入）
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInHorizontally(initialOffsetX = { it }),
+        exit = slideOutHorizontally(targetOffsetX = { it }),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(0.88f)
+                    .background(MaterialTheme.colorScheme.background)
+                    .statusBarsPadding(),
         ) {
             // 顶部栏
             Row(
@@ -396,6 +405,7 @@ fun VcpLogSidebarPanel(
                     }
                 }
             }
+        }
         }
     }
 }

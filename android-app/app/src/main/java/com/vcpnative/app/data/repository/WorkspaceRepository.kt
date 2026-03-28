@@ -15,6 +15,7 @@ import com.vcpnative.app.data.room.TopicDao
 import com.vcpnative.app.data.room.TopicEntity
 import com.vcpnative.app.model.ChatAttachment
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -283,19 +284,19 @@ class RoomWorkspaceRepository(
     override suspend fun loadRegexRules(agentId: String): List<RegexRuleEntity> =
         regexRuleDao.loadByAgent(agentId)
 
-    @Volatile
-    private var lastHistorySyncTimeMs = 0L
+    private val lastHistorySyncTimeMs = AtomicLong(0L)
     private val historySyncMinIntervalMs = 2_000L
 
     private suspend fun syncCompatHistory(topicId: String, debounce: Boolean = false) {
         if (debounce) {
             val now = System.currentTimeMillis()
-            if (now - lastHistorySyncTimeMs < historySyncMinIntervalMs) {
-                // Skip this sync — too recent. The final non-debounced call
-                // (when streaming completes) will flush everything.
+            val lastSync = lastHistorySyncTimeMs.get()
+            if (now - lastSync < historySyncMinIntervalMs ||
+                !lastHistorySyncTimeMs.compareAndSet(lastSync, now)) {
+                // Skip this sync — too recent or lost CAS race. The final
+                // non-debounced call (when streaming completes) will flush everything.
                 return
             }
-            lastHistorySyncTimeMs = now
         }
         val topic = topicDao.findById(topicId) ?: return
         syncCompatHistory(topic)

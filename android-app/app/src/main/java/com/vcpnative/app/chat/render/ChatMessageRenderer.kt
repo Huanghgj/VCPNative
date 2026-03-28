@@ -4908,7 +4908,7 @@ private const val BROWSER_HTML_IMAGE_PREVIEW_ALT_QUERY = "alt"
 private const val IMAGE_DEBUG_TAG = "VCPImageDebug"
 private val BROWSER_HTML_ADVANCED_TAGS_REGEX = Regex("""(?is)<(style|svg|filter|pattern|mask|canvas|iframe|video|audio)\b""")
 private val BROWSER_HTML_EVENT_HANDLER_REGEX = Regex("""(?is)\bon(?:click|mouseover|mouseout|mouseenter|mouseleave|load|error)\s*=""")
-private val BROWSER_HTML_CSS_FEATURES_REGEX = Regex("""(?is)(@keyframes|animation\s*:|backdrop-filter\s*:|filter\s*:|perspective\s*:|grid-template-columns\s*:|grid-template-rows\s*:|display\s*:\s*grid|display\s*:\s*flex|position\s*:\s*fixed|position\s*:\s*sticky|transform\s*:|clip-path\s*:|radial-gradient\s*\(|linear-gradient\s*\()""")
+private val BROWSER_HTML_CSS_FEATURES_REGEX = Regex("""(?is)(@keyframes|animation\s*:|backdrop-filter\s*:|filter\s*:|perspective\s*:|transform-style\s*:|preserve-3d|grid-template-columns\s*:|grid-template-rows\s*:|display\s*:\s*grid|display\s*:\s*flex|position\s*:\s*fixed|position\s*:\s*sticky|transform\s*:|clip-path\s*:|radial-gradient\s*\(|linear-gradient\s*\()""")
 private val BROWSER_HTML_CSS_VAR_REGEX = Regex("""(?is)var\s*\(--""")
 private val BROWSER_IMAGE_URL_REGEX = Regex("""\.(?:jpe?g|png|gif|webp|bmp|svg)(?:\?[^\s]*)?$""", RegexOption.IGNORE_CASE)
 private val SAFE_MODE_HTML_TAG_REGEX = Regex("""</?[a-zA-Z][^>]*>""")

@@ -34,6 +34,7 @@ interface StreamSessionManager {
 
 class VcpToolBoxStreamSessionManager(
     private val okHttpClient: OkHttpClient,
+    private val boundedHttpClient: OkHttpClient = okHttpClient,
 ) : StreamSessionManager {
     private val activeRequests = ConcurrentHashMap<String, ActiveStreamRequest>()
 
@@ -186,9 +187,12 @@ class VcpToolBoxStreamSessionManager(
                 message = "未找到活跃请求 $requestId",
             )
 
+        // Mark as interrupted first so the stream loop recognises the cancel
         activeRequest.interrupted.set(true)
-        activeRequest.call.cancel()
 
+        // Send remote interrupt signal to backend BEFORE cancelling the local
+        // connection — matches VCPChat behaviour where the backend is notified
+        // first so it can stop generation.
         val interruptRequest = Request.Builder()
             .url(activeRequest.serviceConfig.interruptUrl)
             .post(
@@ -201,8 +205,9 @@ class VcpToolBoxStreamSessionManager(
             .header("Authorization", "Bearer ${activeRequest.serviceConfig.apiKey}")
             .build()
 
-        return try {
-            okHttpClient.newCall(interruptRequest).execute().use { response ->
+        val remoteResult = try {
+            // Use bounded client (short timeout) for the interrupt call
+            boundedHttpClient.newCall(interruptRequest).execute().use { response ->
                 if (response.isSuccessful) {
                     StreamInterruptResult(
                         success = true,
@@ -221,6 +226,12 @@ class VcpToolBoxStreamSessionManager(
                 message = error.message ?: "中断请求失败",
             )
         }
+
+        // Always cancel the local call regardless of remote result — ensures
+        // the stream stops even if the backend interrupt endpoint is unreachable.
+        activeRequest.call.cancel()
+
+        return remoteResult
     }
 
     private fun buildRequestBody(compiledRequest: CompiledChatRequest): String {

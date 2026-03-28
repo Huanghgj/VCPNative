@@ -128,6 +128,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 
 class ChatViewModel(
     private val agentId: String,
@@ -161,7 +162,7 @@ class ChatViewModel(
     val pendingAttachments: StateFlow<List<ChatAttachment>> = _pendingAttachments.asStateFlow()
     private val _runtimeNotice = MutableStateFlow<String?>(null)
     val runtimeNotice: StateFlow<String?> = _runtimeNotice.asStateFlow()
-    private var activeRequestId: String? = null
+    private val activeRequestId = AtomicReference<String?>(null)
 
     private data class PendingUserMessage(
         val text: String,
@@ -296,16 +297,14 @@ class ChatViewModel(
     }
 
     fun interrupt() {
-        val requestId = activeRequestId ?: return
+        val requestId = activeRequestId.get() ?: return
         viewModelScope.launch {
             val result = streamSessionManager.interrupt(requestId)
             if (!result.success) {
-                workspaceRepository.addMessage(
-                    topicId = topicId,
-                    role = "system",
-                    content = result.message ?: "中断请求失败",
-                    status = "error",
-                )
+                // Remote interrupt failed — log the error but don't block.
+                // The local call.cancel() in StreamSessionManager already
+                // ensures the stream will stop and emit Interrupted event.
+                Log.w(TAG, "Remote interrupt failed for $requestId: ${result.message}")
             }
         }
     }
@@ -444,6 +443,7 @@ class ChatViewModel(
             val prepared = prepareRequest()
             failureMessage = prepared.failureMessage
             assistantDraftId = prepared.compiledRequest.requestId
+            activeRequestId.set(prepared.compiledRequest.requestId)
             submitPreparedRequest(prepared)
         } catch (error: Throwable) {
             runCatching {
@@ -466,7 +466,7 @@ class ChatViewModel(
                 _runtimeNotice.value = failureText
             }
         } finally {
-            activeRequestId = null
+            activeRequestId.set(null)
             _isSending.value = false
         }
     }
@@ -475,7 +475,6 @@ class ChatViewModel(
         prepared: PreparedRequest,
     ) {
         val compiledRequest = prepared.compiledRequest
-        activeRequestId = compiledRequest.requestId
         val baseTimestamp = System.currentTimeMillis()
 
         prepared.pendingUserMessage?.let { pendingUser ->
@@ -559,8 +558,9 @@ class ChatViewModel(
                             status = "error",
                         )
                     } else {
-                        assistantBuffer.clear()
-                        assistantBuffer.append(finalText)
+                        // Replace buffer content safely: keep old content until persist succeeds
+                        val snapshot = finalText
+                        assistantBuffer.clear().append(snapshot)
                         persistAssistant(
                             status = "complete",
                             force = true,
@@ -582,8 +582,8 @@ class ChatViewModel(
                             )
                         }
                     } else {
-                        assistantBuffer.clear()
-                        assistantBuffer.append(partialText)
+                        val snapshot = partialText
+                        assistantBuffer.clear().append(snapshot)
                         persistAssistant(
                             status = "interrupted",
                             force = true,
@@ -596,8 +596,8 @@ class ChatViewModel(
                     if (partialText.isBlank()) {
                         workspaceRepository.deleteMessage(topicId, compiledRequest.requestId)
                     } else {
-                        assistantBuffer.clear()
-                        assistantBuffer.append(partialText)
+                        val snapshot = partialText
+                        assistantBuffer.clear().append(snapshot)
                         persistAssistant(
                             status = "error",
                             force = true,

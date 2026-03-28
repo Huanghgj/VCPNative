@@ -363,7 +363,11 @@ function applyPauseToState(messageItem, state) {
             if (ctx.animationId) {
                 cancelAnimationFrame(ctx.animationId);
             }
+            // Capture the current animation loop before clearing it
             if (ctx.renderer?.setAnimationLoop) {
+                if (!ctx._savedAnimationLoop && ctx.renderer._animationLoop) {
+                    ctx._savedAnimationLoop = ctx.renderer._animationLoop;
+                }
                 ctx.renderer.setAnimationLoop(null);
             }
             ctx.isPaused = true;
@@ -437,8 +441,20 @@ export function resumeMessageAnimations(messageItem) {
     state.threeContexts.forEach(ctx => {
         if (ctx.isPaused) {
             ctx.isPaused = false;
-            if (ctx.renderLoop) {
+            // Restore saved animation loop, or do a single re-render as fallback
+            if (ctx._savedAnimationLoop && ctx.renderer?.setAnimationLoop) {
+                ctx.renderer.setAnimationLoop(ctx._savedAnimationLoop);
+            } else if (ctx.renderLoop) {
                 ctx.renderLoop();
+            } else if (ctx.renderer && ctx.getScene && ctx.getCamera) {
+                // Fallback: trigger a single render to refresh the canvas
+                try {
+                    const scene = ctx.getScene();
+                    const camera = ctx.getCamera();
+                    if (scene && camera) {
+                        ctx.renderer.render(scene, camera);
+                    }
+                } catch (e) { }
             }
         }
     });
@@ -516,6 +532,9 @@ export function registerThreeContext(messageItem, context) {
                 cancelAnimationFrame(context.animationId);
             }
             if (context.renderer?.setAnimationLoop) {
+                if (!context._savedAnimationLoop && context.renderer._animationLoop) {
+                    context._savedAnimationLoop = context.renderer._animationLoop;
+                }
                 context.renderer.setAnimationLoop(null);
             }
             context.isPaused = true;

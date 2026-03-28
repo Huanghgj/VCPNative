@@ -109,6 +109,7 @@ fun defaultVcpHttpClient(): OkHttpClient =
         .connectionPool(sharedConnectionPool)
         .retryOnConnectionFailure(true)
         .connectTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.MINUTES) // Generous but finite timeout for SSE streaming
         .build()
 

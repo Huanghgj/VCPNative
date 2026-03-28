@@ -63,6 +63,7 @@ body{background:var(--bg);color:var(--text)}
   height:100%;overflow-y:auto;overflow-x:hidden;
   -webkit-overflow-scrolling:touch;
   padding:8px 14px 16px;
+  will-change:scroll-position;
 }
 #c::-webkit-scrollbar{width:3px}
 #c::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:2px}
@@ -339,6 +340,9 @@ body{background:var(--bg);color:var(--text)}
 .html-render{border-radius:10px;overflow:hidden;margin:4px -4px}
 .html-render *{max-width:100%}
 
+/* ── 可见性优化：暂停离屏消息动画 ─────────────── */
+.vcp-paused,.vcp-paused *{animation-play-state:paused!important;transition:none!important}
+
 /* ── HTML 预览（iframe）────────────────────────── */
 .html-preview{position:relative;margin:.5em 0;border-radius:10px;overflow:hidden;border:1px solid var(--sep)}
 .html-preview-bar{
@@ -351,10 +355,11 @@ body{background:var(--bg);color:var(--text)}
 }
 .html-preview iframe{
   width:100%;border:none;background:#fff;
-  min-height:300px;max-height:70vh;display:none;
+  min-height:200px;display:none;
 }
 .html-preview.active iframe{display:block}
-.html-preview.active .code-block{display:none}
+.html-preview.active .code-block,
+.html-preview.active .html-render{display:none}
 
 /* ── 图片查看器覆盖层 ─────────────────────────── */
 #imgViewer{
@@ -433,7 +438,14 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g
 
 // 清理危险标签（防 XSS）
 function sanitize(html){
-  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'')
+  // 在删除 onclick 之前，提取 onclick="input('...')" 的参数保存到 data-send
+  // 这样 processButtons 可以用 data-send 发送正确的内容
+  // 匹配 onclick="input('...')" 和 onclick='input("...")'
+  var preserved=html.replace(/(<(?:button|a)\b[^>]*?)onclick\s*=\s*["'](?:window\.)?input\(\s*'((?:[^'\\]|\\.)*)'\s*\)["']/gi,
+    function(_,before,msg){return before+'data-send="'+msg.replace(/"/g,'&quot;')+'"'});
+  preserved=preserved.replace(/(<(?:button|a)\b[^>]*?)onclick\s*=\s*["'](?:window\.)?input\(\s*"((?:[^"\\]|\\.)*)"\s*\)["']/gi,
+    function(_,before,msg){return before+'data-send="'+msg.replace(/"/g,'&quot;')+'"'});
+  return preserved.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'')
     .replace(/on\w+\s*=\s*["'][^"']*["']/gi,'')
     .replace(/javascript\s*:/gi,'blocked:');
 }
@@ -575,12 +587,16 @@ function renderContent(content,role){
   if(/<!DOCTYPE\s+html|<html[\s>]/i.test(processed)){
     return '<div class="html-render" data-full-html="1">'+processed+'</div>';
   }
+  // 检测交互式 HTML 片段（同时含 <style> 和 <script>）— 视为完整文档用 iframe 隔离
+  if(/<style[\s>]/i.test(processed)&&/<script[\s>]/i.test(processed)){
+    return '<div class="html-render" data-full-html="1">'+processed+'</div>';
+  }
   // 普通 HTML 片段 — sanitize 防 XSS
   if(/<(?:div|style|svg|canvas|iframe|table|script|head|body)\b/i.test(processed)){
     return '<div class="html-render">'+sanitize(processed)+'</div>';
   }
   // 检测是否已被特殊处理器转换（包含我们的组件class）
-  if(/<div class="(?:tool-|thought|diary|role-div|btn-click)/.test(processed)){
+  if(/<(?:div|span) class="(?:tool-|thought|diary|role-div|btn-click)/.test(processed)){
     return processed;
   }
   return md(processed);
@@ -661,7 +677,7 @@ window.toggleHtmlPreview=function(id){
   var isActive=container.classList.contains('active');
   var btn=container.querySelector('.html-preview-bar button');
   var iframe=container.querySelector('iframe');
-  var codeBlock=container.querySelector('.code-block')||container.querySelector('pre');
+  var codeBlock=container.querySelector('.code-block')||container.querySelector('pre')||container.querySelector('.html-render');
   if(isActive){
     container.classList.remove('active');
     iframe.srcdoc='';iframe.style.display='none';
@@ -678,7 +694,7 @@ window.toggleHtmlPreview=function(id){
       iframe.onload=function(){
         try{
           var h=iframe.contentDocument.documentElement.scrollHeight;
-          iframe.style.height=Math.min(Math.max(h,200),window.innerHeight*0.7)+'px';
+          iframe.style.height=Math.max(h,200)+'px';
         }catch(e){iframe.style.height='400px'}
       };
     }
@@ -698,15 +714,21 @@ window.input=function(text){
   }
 };
 
-// 自动给 AI 生成的按钮绑定点击事件
+// 自动给 AI 生成的按钮绑定点击事件（跳过交互式 HTML 内容里的按钮）
 function processButtons(container){
   var btns=container.querySelectorAll('button:not([data-vcp-processed])');
   btns.forEach(function(btn){
+    // 跳过交互式 HTML / iframe 预览 / html-render 里有 onclick 的按钮
+    if(btn.closest('.html-render[data-full-html]')||btn.closest('.html-preview-bar'))return;
+    if(btn.closest('.html-render')&&btn.hasAttribute('onclick'))return;
     btn.setAttribute('data-vcp-processed','1');
     btn.style.cursor='pointer';
     btn.addEventListener('click',function(e){
       e.preventDefault();e.stopPropagation();
-      var sendText=btn.getAttribute('data-send')||btn.textContent.trim();
+      // 优先 data-send 属性，其次按钮自身的纯文本内容（去掉多余空白）
+      var sendText=(btn.getAttribute('data-send')||btn.textContent||'').replace(/\s+/g,' ').trim();
+      // 防止发送过长内容（如 HTML 残留）
+      if(sendText.length>200)sendText=sendText.substring(0,200);
       if(!sendText)return;
       // 发送
       window.input(sendText);
@@ -728,20 +750,33 @@ function processHtmlPreviews(container){
   var renders=container.querySelectorAll('.html-render:not([data-hp])');
   renders.forEach(function(el){
     el.setAttribute('data-hp','1');
-    // 完整 HTML 文档：从原始消息内容恢复（innerHTML 可能被浏览器修改过）
+    // 完整 HTML 文档 / 交互式片段：用 iframe 隔离运行（脚本不能在主页面执行，会污染聊天 DOM）
     if(el.getAttribute('data-full-html')==='1'){
-      // 尝试修复被 sanitize/浏览器吃掉的 onclick 属性
       var raw=el.innerHTML;
-      // 模式: <button class="move-btn" U', 1)"> → <button class="move-btn" onclick="rotate('U', 1)">
+      // 尝试修复被后端吃掉的 onclick 属性
       raw=raw.replace(/<button([^>]*?)\s+(\w+)',\s*(-?\d+)\)">/gi,function(_,attrs,move,dir){
         return '<button'+attrs+' onclick="rotate(\''+move+'\', '+dir+')">';
       });
-      // 模式: <button class="action-btn" > → 尝试绑定 scramble/reset
-      raw=raw.replace(/<button([^>]*class="action-btn"[^>]*)\s*>/gi,
-        '<button$1 onclick="scramble()">');
-      raw=raw.replace(/<button([^>]*class="reset-btn"[^>]*)\s*>/gi,
-        '<button$1 onclick="reset()">');
-      wrapAsPreview(el,raw);
+      // 直接自动加载到 iframe（不需要用户点击"运行"）
+      var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
+      var preview=document.createElement('div');
+      preview.className='html-preview active';
+      preview.id=id;
+      preview.dataset.src=raw;
+      var iframe=document.createElement('iframe');
+      iframe.sandbox='allow-scripts allow-same-origin';
+      iframe.style.display='block';
+      iframe.srcdoc=raw;
+      iframe.onload=function(){
+        try{
+          var h=iframe.contentDocument.documentElement.scrollHeight;
+          iframe.style.height=Math.max(h,200)+'px';
+        }catch(e){iframe.style.height='400px'}
+      };
+      el.innerHTML='';
+      el.parentNode.insertBefore(preview,el);
+      preview.appendChild(el);
+      preview.appendChild(iframe);
       return;
     }
     // 其他情况：检测 textContent 里的 HTML（被转义展示的代码）

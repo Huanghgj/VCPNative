@@ -1,12 +1,16 @@
-// 从 Web 服务器的根目录加载模块
-import DiceBox from "/node_modules/@3d-dice/dice-box/dist/dice-box.es.js";
+// Load dice-box from local vendor bundle (Android asset-friendly relative path)
+import DiceBox from "./vendor/dice-box.es.js";
 
-// 使用相对于 Web 服务器根目录的绝对路径
+// Asset path relative to this module's directory.
+// On Android WebView file:// protocol, origin is "null" — override to empty string
+// so asset URLs resolve as relative paths. Disable offscreen mode because
+// OffscreenCanvas + Web Workers are unreliable under file:// on Android.
 const Box = new DiceBox({
     container: "#dice-canvas-container",
-    assetPath: "/assets/dice-box/",
+    assetPath: "./assets/dice-box/",
+    origin: "",
     theme: "default",
-    offscreen: true,
+    offscreen: false,
     scale: 6
 });
 

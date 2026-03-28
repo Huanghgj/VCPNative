@@ -3,6 +3,7 @@ package com.vcpnative.app.network.vcplog
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -73,6 +74,7 @@ class VcpLogClient(
     private var currentKey: String? = null
     private var shouldReconnect = false
     private var reconnectAttempt = 0
+    private var reconnectJob: Job? = null
     private var logConnected = false
     private var infoConnected = false
 
@@ -88,6 +90,8 @@ class VcpLogClient(
 
     fun disconnect() {
         shouldReconnect = false
+        reconnectJob?.cancel()
+        reconnectJob = null
         logSocket?.close(1000, "Client disconnect")
         infoSocket?.close(1000, "Client disconnect")
         logSocket = null
@@ -185,7 +189,8 @@ class VcpLogClient(
         )
         Log.d(TAG, "Reconnect #$reconnectAttempt in ${delayMs}ms")
         _status.value = VcpLogConnectionStatus.Connecting
-        scope.launch {
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
             delay(delayMs)
             if (shouldReconnect) doConnect(url, key)
         }
