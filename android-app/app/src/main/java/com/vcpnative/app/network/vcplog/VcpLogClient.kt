@@ -86,11 +86,16 @@ class VcpLogClient(
         _status.value = VcpLogConnectionStatus.Connecting
 
         val url = buildString {
-            val base = wsUrl.trimEnd('/')
+            // 自动将 http(s):// 转为 ws(s):// — 用户可能配置的是 HTTP URL
+            var base = wsUrl.trimEnd('/')
+            if (base.startsWith("http://")) base = "ws://" + base.removePrefix("http://")
+            else if (base.startsWith("https://")) base = "wss://" + base.removePrefix("https://")
+            else if (!base.startsWith("ws://") && !base.startsWith("wss://")) base = "ws://$base"
             append(base)
             append("/VCPlog/VCP_Key=")
             append(wsKey)
         }
+        Log.d(TAG, "VCPLog connecting to: $url")
 
         val request = Request.Builder().url(url).build()
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {

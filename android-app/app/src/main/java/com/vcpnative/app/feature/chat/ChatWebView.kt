@@ -1,30 +1,30 @@
 package com.vcpnative.app.feature.chat
 
 import android.annotation.SuppressLint
-import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vcpnative.app.bridge.BridgeLogger
 import com.vcpnative.app.data.room.MessageEntity
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -33,10 +33,9 @@ private const val TAG = "ChatWebView"
 private const val CHAT_HTML_URL = "file:///android_asset/vcpchat/chat.html"
 
 /**
- * Single-WebView chat renderer. Replaces the old LazyColumn + per-message WebView approach.
- *
- * All messages are rendered inside one WebView using VCPChat-style CSS.
- * Messages are injected/updated via JavaScript bridge calls.
+ * Single-WebView chat renderer.
+ * All messages rendered inside one WebView using iMessage-style CSS.
+ * Messages injected/updated via JavaScript bridge calls.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -47,9 +46,10 @@ fun ChatWebView(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val webViewRef = remember { arrayOfNulls<WebView>(1) }
-    // Track which messages have been sent to the WebView
     val sentIds = remember { mutableSetOf<String>() }
-    var webViewReady = remember { booleanArrayOf(false) }
+    var webViewReady by remember { mutableStateOf(false) }
+    // Always have a fresh reference to current messages
+    val currentMessages by rememberUpdatedState(messages)
 
     DisposableEffect(Unit) {
         onDispose {
@@ -91,10 +91,10 @@ fun ChatWebView(
                     @JavascriptInterface
                     fun onReady() {
                         BridgeLogger.d(TAG, "WebView ready")
-                        webViewReady[0] = true
-                        // Load initial messages
+                        // Use currentMessages (always up-to-date via rememberUpdatedState)
                         scope.launch(Dispatchers.Main) {
-                            loadAllMessages(this@apply, messages, sentIds)
+                            webViewReady = true
+                            loadAllMessages(this@apply, currentMessages, sentIds)
                         }
                     }
 
@@ -119,7 +119,7 @@ fun ChatWebView(
 
                     override fun shouldOverrideUrlLoading(
                         view: WebView?,
-                        request: android.webkit.WebResourceRequest?,
+                        request: WebResourceRequest?,
                     ): Boolean {
                         val url = request?.url?.toString() ?: return false
                         if (url.startsWith("http://") || url.startsWith("https://")) {
@@ -143,17 +143,15 @@ fun ChatWebView(
         },
     )
 
-    // React to message list changes
-    LaunchedEffect(messages) {
+    // React to message list changes AFTER WebView is ready
+    LaunchedEffect(messages, webViewReady) {
+        if (!webViewReady) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
-        if (!webViewReady[0]) return@LaunchedEffect
         syncMessages(wv, messages, sentIds)
     }
 }
 
-/**
- * Load all messages at once (initial load / topic switch).
- */
+/** Load all messages at once (initial load / topic switch). */
 private fun loadAllMessages(
     webView: WebView,
     messages: List<MessageEntity>,
@@ -170,37 +168,26 @@ private fun loadAllMessages(
         })
         sentIds.add(msg.id)
     }
-    val escaped = jsonArray.toString()
-        .replace("\\", "\\\\")
-        .replace("'", "\\'")
+    val escaped = escapeForJs(jsonArray.toString())
     webView.evaluateJavascript("vcpChat.clearChat();vcpChat.loadHistory('$escaped');", null)
     BridgeLogger.d(TAG, "Loaded ${messages.size} messages")
 }
 
-/**
- * Incremental sync: add new messages, update changed ones.
- */
+/** Incremental sync: add new messages, update changed ones. */
 private fun syncMessages(
     webView: WebView,
     messages: List<MessageEntity>,
     sentIds: MutableSet<String>,
 ) {
     for (msg in messages) {
-        val escapedContent = msg.content
-            .replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", "\\n")
-            .replace("\r", "")
-
+        val escapedContent = escapeForJs(msg.content)
         if (msg.id !in sentIds) {
-            // New message
             webView.evaluateJavascript(
                 "vcpChat.addMessage('${msg.id}','${msg.role}','$escapedContent','${msg.status}');",
                 null,
             )
             sentIds.add(msg.id)
         } else {
-            // Update existing (content or status changed)
             webView.evaluateJavascript(
                 "vcpChat.updateMessage('${msg.id}','$escapedContent','${msg.status}');",
                 null,
@@ -216,3 +203,11 @@ private fun syncMessages(
         sentIds.remove(id)
     }
 }
+
+/** Escape content for safe embedding in JS string literals. */
+private fun escapeForJs(text: String): String =
+    text.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "")
+        .replace("</script>", "<\\/script>")
