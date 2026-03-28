@@ -818,7 +818,14 @@ private fun ChatScreen(
                         }
                     },
                     actions = {
-                        // 更多操作 — 收纳进一个菜单，保持顶栏干净
+                        // 通知铃铛
+                        val vcpLogState = LocalVcpLogNotification.current
+                        VcpLogNotificationBell(
+                            unreadCount = vcpLogState.unreadCount,
+                            connectionStatus = vcpLogState.connectionStatus,
+                            onClick = vcpLogState.onToggleSidebar,
+                        )
+                        // 更多操作菜单
                         var menuExpanded by remember { mutableStateOf(false) }
                         Box {
                             IconButton(onClick = { menuExpanded = true }) {

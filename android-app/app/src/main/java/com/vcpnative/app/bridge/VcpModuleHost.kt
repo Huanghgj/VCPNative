@@ -213,13 +213,40 @@ private fun createModuleWebView(
             ): WebResourceResponse? {
                 val url = request?.url?.toString() ?: return null
 
-                // Log all asset requests for debugging
+                // 拦截模块 HTML — 注入 bridge-shim.js 到 <head> 里，
+                // 确保在所有 <script> 标签之前执行（解决时序竞争）
+                if (url.startsWith("file:///android_asset/") && url.endsWith(".html")) {
+                    val assetPath = url.removePrefix("file:///android_asset/")
+                    try {
+                        val originalHtml = context.assets.open(assetPath)
+                            .bufferedReader().readText()
+                        val shimScript = "<script>\n$bridgeShimJs\nwindow.__vcpPlatform='android';\n</script>\n"
+                        val mobileStyle = "<style id='vcp-mobile-overrides'>\n$mobileOverrideCss\n</style>\n"
+                        val viewportMeta = "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'/>\n"
+                        // 在 <head> 之后注入
+                        val injected = if (originalHtml.contains("<head>", ignoreCase = true)) {
+                            originalHtml.replaceFirst(
+                                Regex("<head>", RegexOption.IGNORE_CASE),
+                                "<head>\n$viewportMeta$mobileStyle$shimScript",
+                            )
+                        } else {
+                            "$viewportMeta$mobileStyle$shimScript$originalHtml"
+                        }
+                        BridgeLogger.d(modulePath, "Injected shim into HTML: $assetPath")
+                        return WebResourceResponse(
+                            "text/html", "utf-8",
+                            ByteArrayInputStream(injected.toByteArray(Charsets.UTF_8)),
+                        )
+                    } catch (e: Exception) {
+                        BridgeLogger.w(modulePath, "HTML intercept failed: $assetPath (${e.message})")
+                    }
+                }
+
+                // 其他资源 — 检查是否存在
                 if (url.startsWith("file:///android_asset/")) {
                     val assetPath = url.removePrefix("file:///android_asset/")
                     try {
-                        // Verify asset exists
-                        val stream = view?.context?.assets?.open(assetPath)
-                        stream?.close()
+                        context.assets.open(assetPath).close()
                     } catch (e: Exception) {
                         BridgeLogger.w(modulePath, "Asset not found: $assetPath")
                     }
