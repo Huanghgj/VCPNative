@@ -248,6 +248,47 @@ fun createIpcDispatcher(
         notesManager.copyNoteContent(path)
     }
 
+    // ---- Models ----
+    dispatcher.register("get-cached-models") {
+        // Return models from the workspace repo's cached model list
+        // Forum/Memo JS modules call this to show model selector
+        val settings = settingsRepository.settings.first()
+        JSONObject().apply {
+            put("vcpServerUrl", settings.vcpServerUrl)
+            put("vcpApiKey", settings.vcpApiKey)
+        }
+        // Modules use load-settings to get server URL then fetch models themselves
+        // Return empty array as placeholder — modules do their own fetch
+        JSONArray()
+    }
+
+    // ---- Agent list for Forum/Memo ----
+    dispatcher.register("load-agents-list") {
+        val agents = workspaceRepository.observeAgents().first()
+        JSONArray().apply {
+            agents.forEach { agent ->
+                put(JSONObject().apply {
+                    put("id", agent.id)
+                    put("name", agent.name)
+                    put("avatarPath", agent.avatarPath ?: JSONObject.NULL)
+                })
+            }
+        }
+    }
+
+    dispatcher.register("load-user-avatar") {
+        // Android doesn't have a separate user avatar concept yet
+        JSONObject.NULL
+    }
+
+    dispatcher.register("load-agent-avatar") { args ->
+        val agentId = args.optString(0, "")
+        val agent = workspaceRepository.findAgent(agentId)
+        if (agent?.avatarPath != null) {
+            JSONObject().apply { put("path", agent.avatarPath) }
+        } else JSONObject.NULL
+    }
+
     // ---- Forum / Memo config (simple JSON persistence) ----
     val configDir = File(context.filesDir, "module_configs").also { it.mkdirs() }
 
@@ -279,8 +320,8 @@ fun createIpcDispatcher(
         "save-agent-config", "create-agent", "delete-agent",
         "save-avatar", "save-user-avatar", "select-avatar",
         "save-avatar-color", "update-agent-config",
-        // Models
-        "get-cached-models", "refresh-models", "get-hot-models",
+        // Models (remaining stubs)
+        "refresh-models", "get-hot-models",
         "get-favorite-models", "toggle-favorite-model",
         // Prompt
         "load-preset-prompts", "load-preset-content", "select-directory",
@@ -329,9 +370,8 @@ fun createIpcDispatcher(
         // Voice
         "open-voice-chat-window",
         "start-speech-recognition", "stop-speech-recognition",
-        // Forum / Memo (remaining stubs)
+        // Forum / Memo (remaining stubs — open-window is no-op on mobile)
         "open-forum-window", "open-memo-window",
-        "load-agents-list", "load-user-avatar", "load-agent-avatar",
         // Canvas
         "open-canvas-window", "create-new-canvas", "load-canvas-file",
         "save-canvas-file", "rename-canvas-file", "copy-canvas-file",
