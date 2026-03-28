@@ -609,6 +609,97 @@ window.vcpChat={
   setTheme:function(dark){document.documentElement.style.colorScheme=dark?'dark':'light'}
 };
 
+// ── AI 按钮交互（window.input 函数）─────────────
+// AI 生成的 HTML 里的 <button> 可以调用 input('消息') 来发送消息
+// 对应 VCPChat 桌面端的 contentProcessor.js processInteractiveButtons
+window.input=function(text){
+  if(!text)return;
+  var msg='[[点击按钮:'+text+']]';
+  if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
+    window.VcpChatBridge.onAction('send',msg);
+  }
+};
+
+// 自动给 AI 生成的按钮绑定点击事件
+function processButtons(container){
+  var btns=container.querySelectorAll('button:not([data-vcp-processed])');
+  btns.forEach(function(btn){
+    btn.setAttribute('data-vcp-processed','1');
+    btn.style.cursor='pointer';
+    btn.addEventListener('click',function(e){
+      e.preventDefault();e.stopPropagation();
+      var sendText=btn.getAttribute('data-send')||btn.textContent.trim();
+      if(!sendText)return;
+      // 发送
+      window.input(sendText);
+      // 禁用按钮
+      btn.disabled=true;btn.style.opacity='0.5';
+      btn.textContent='✓ '+btn.textContent;
+    });
+  });
+}
+
+// 每次消息渲染后处理按钮
+var _origAdd=window.vcpChat.addMessage;
+window.vcpChat.addMessage=function(id,role,content,status){
+  _origAdd.call(this,id,role,content,status);
+  var el=MM[id];if(el)processButtons(el);
+};
+var _origUpdate=window.vcpChat.updateMessage;
+window.vcpChat.updateMessage=function(id,content,status){
+  _origUpdate.call(this,id,content,status);
+  var el=MM[id];if(el)processButtons(el);
+};
+var _origHistory=window.vcpChat.loadHistory;
+window.vcpChat.loadHistory=function(json){
+  _origHistory.call(this,json);
+  processButtons(C);
+};
+
+// ── 消息编辑功能 ─────────────────────────────────
+var editOverlay=null;
+window.editMessage=function(msgId){
+  if(editOverlay){editOverlay.remove();editOverlay=null;}
+  // 请求 Kotlin 获取原始内容
+  if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
+    window.VcpChatBridge.onAction('getContent',msgId);
+  }
+};
+// Kotlin 调用此函数打开编辑器
+window.vcpChat.openEditor=function(msgId,rawContent){
+  if(editOverlay){editOverlay.remove();}
+  editOverlay=document.createElement('div');
+  editOverlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;padding:12px;';
+  editOverlay.innerHTML=
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'+
+      '<span style="font-size:15px;font-weight:600;">编辑消息</span>'+
+      '<button onclick="cancelEdit()" style="background:none;border:none;color:var(--text);font-size:20px;padding:8px;cursor:pointer;">✕</button>'+
+    '</div>'+
+    '<textarea id="editArea" style="flex:1;background:var(--ast-bubble);color:var(--text);border:1px solid var(--sep);border-radius:10px;padding:12px;font-size:14px;line-height:1.5;resize:none;font-family:inherit;"></textarea>'+
+    '<div style="display:flex;gap:8px;margin-top:8px;">'+
+      '<button onclick="cancelEdit()" style="flex:1;padding:10px;border-radius:10px;border:1px solid var(--sep);background:none;color:var(--text);font-size:14px;cursor:pointer;">取消</button>'+
+      '<button onclick="saveEdit(\''+msgId+'\')" style="flex:1;padding:10px;border-radius:10px;border:none;background:var(--user-bubble);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">保存</button>'+
+    '</div>';
+  document.body.appendChild(editOverlay);
+  var ta=document.getElementById('editArea');
+  ta.value=rawContent;
+  ta.focus();
+};
+window.cancelEdit=function(){
+  if(editOverlay){editOverlay.remove();editOverlay=null;}
+};
+window.saveEdit=function(msgId){
+  var ta=document.getElementById('editArea');
+  if(!ta)return;
+  var newContent=ta.value;
+  if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
+    window.VcpChatBridge.onAction('saveEdit',msgId+'|||'+newContent);
+  }
+  cancelEdit();
+  // 本地立即更新显示
+  vcpChat.updateMessage(msgId,newContent,'complete');
+};
+
 // ── 长按上下文菜单 ──────────────────────────────
 var ctxMenu=document.getElementById('ctxMenu');
 var ctxOverlay=document.getElementById('ctxOverlay');
@@ -703,7 +794,7 @@ function showCtxMenu(msgEl,touch){
       });
       // 编辑消息
       addItem('✏️','编辑消息','',function(){
-        if(window.VcpChatBridge)window.VcpChatBridge.onAction('edit',id);
+        editMessage(id);
       });
       // 创建分支
       addItem('🔀','创建分支','',function(){

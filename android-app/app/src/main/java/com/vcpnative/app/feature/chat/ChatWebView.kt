@@ -113,10 +113,9 @@ fun ChatWebView(
 
                     @JavascriptInterface
                     fun onAction(action: String, value: String) {
-                        BridgeLogger.d(TAG, "Action: $action ($value)")
+                        BridgeLogger.d(TAG, "Action: $action (${value.take(100)})")
                         when (action) {
                             "copy" -> {
-                                // Copy rendered text to clipboard
                                 scope.launch(Dispatchers.Main) {
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
                                         as android.content.ClipboardManager
@@ -126,8 +125,32 @@ fun ChatWebView(
                                     Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
                                 }
                             }
+                            "getContent" -> {
+                                // 编辑请求：返回原始内容给 WebView 编辑器
+                                scope.launch(Dispatchers.Main) {
+                                    val msg = currentMessages.find { it.id == value }
+                                    if (msg != null) {
+                                        val b64 = android.util.Base64.encodeToString(
+                                            msg.content.toByteArray(Charsets.UTF_8),
+                                            android.util.Base64.NO_WRAP,
+                                        )
+                                        this@apply.evaluateJavascript(
+                                            "vcpChat.openEditor('${msg.id}',b64d('$b64'));",
+                                            null,
+                                        )
+                                    }
+                                }
+                            }
+                            "saveEdit" -> {
+                                // 保存编辑：value 格式为 "messageId|||newContent"
+                                val parts = value.split("|||", limit = 2)
+                                if (parts.size == 2) {
+                                    scope.launch(Dispatchers.Main) {
+                                        currentOnAction("saveEdit", value)
+                                    }
+                                }
+                            }
                             else -> {
-                                // Delegate to Compose callback
                                 scope.launch(Dispatchers.Main) {
                                     currentOnAction(action, value)
                                 }

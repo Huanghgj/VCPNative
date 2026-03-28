@@ -885,7 +885,6 @@ private fun ChatScreen(
             onAction = { action, value ->
                 when (action) {
                     "copyRaw" -> {
-                        // 复制原文
                         val msg = messages.find { it.id == value }
                         if (msg != null) {
                             val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -896,8 +895,18 @@ private fun ChatScreen(
                     }
                     "retry" -> onRetryAssistantMessage(value)
                     "interrupt" -> onInterruptAssistantMessage(value)
-                    "edit" -> {
-                        // TODO: 打开编辑对话框
+                    "send" -> {
+                        // AI 按钮点击 → 作为用户消息发送
+                        onSendMessage(value)
+                    }
+                    "saveEdit" -> {
+                        // 编辑保存：value = "messageId|||newContent"
+                        val parts = value.split("|||", limit = 2)
+                        if (parts.size == 2) {
+                            scope.launch {
+                                onEditAssistantMessage(parts[0], parts[1])
+                            }
+                        }
                     }
                     "branch" -> {
                         scope.launch { onCreateBranchFromMessage(value) }
