@@ -1,7 +1,12 @@
 package com.vcpnative.app.feature.chat
 
 import android.annotation.SuppressLint
+import android.app.DownloadManager
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
 import android.view.View
+import android.widget.Toast
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
@@ -101,6 +106,29 @@ fun ChatWebView(
                     @JavascriptInterface
                     fun onLongPress(messageId: String) {
                         BridgeLogger.d(TAG, "Long press: $messageId")
+                    }
+
+                    @JavascriptInterface
+                    fun saveImage(imageUrl: String) {
+                        BridgeLogger.d(TAG, "Save image: $imageUrl")
+                        if (imageUrl.isBlank() || !imageUrl.startsWith("http")) return
+                        scope.launch(Dispatchers.Main) {
+                            try {
+                                val fileName = "VCPChat_${System.currentTimeMillis()}.png"
+                                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                                val request = DownloadManager.Request(Uri.parse(imageUrl)).apply {
+                                    setTitle(fileName)
+                                    setDescription("保存图片")
+                                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                    setDestinationInExternalPublicDir(Environment.DIRECTORY_PICTURES, "VCPChat/$fileName")
+                                }
+                                dm.enqueue(request)
+                                Toast.makeText(context, "图片已开始下载", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                BridgeLogger.e(TAG, "Save image failed: ${e.message}")
+                                Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }, "VcpChatBridge")
 

@@ -301,10 +301,56 @@ body{background:var(--bg);color:var(--text)}
 /* ── HTML 渲染块 ───────────────────────────────── */
 .html-render{border-radius:10px;overflow:hidden;margin:4px -4px}
 .html-render *{max-width:100%}
+
+/* ── 图片查看器覆盖层 ─────────────────────────── */
+#imgViewer{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.92);z-index:9999;
+  display:none;flex-direction:column;
+  align-items:center;justify-content:center;
+}
+#imgViewer.active{display:flex}
+#imgViewer img{
+  max-width:95%;max-height:80vh;
+  object-fit:contain;border-radius:4px;
+  user-select:none;-webkit-user-select:none;
+}
+#imgViewer .toolbar{
+  position:absolute;bottom:env(safe-area-inset-bottom,20px);
+  bottom:calc(env(safe-area-inset-bottom,0px) + 20px);
+  display:flex;gap:16px;
+}
+#imgViewer .toolbar button{
+  background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);
+  color:#fff;padding:10px 24px;border-radius:22px;
+  font-size:14px;font-weight:500;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  cursor:pointer;
+}
+#imgViewer .toolbar button:active{background:rgba(255,255,255,.3)}
+#imgViewer .close-btn{
+  position:absolute;top:env(safe-area-inset-top,12px);
+  top:calc(env(safe-area-inset-top,0px) + 12px);
+  right:16px;
+  width:36px;height:36px;border-radius:50%;
+  background:rgba(255,255,255,.15);border:none;color:#fff;
+  font-size:20px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+}
 </style>
 </head>
 <body>
 <div id="c"></div>
+
+<!-- 图片查看器 -->
+<div id="imgViewer">
+  <button class="close-btn" onclick="closeImgViewer()">✕</button>
+  <img id="imgViewerImg" src="" alt=""/>
+  <div class="toolbar">
+    <button onclick="saveImage()">保存图片</button>
+    <button onclick="copyImageUrl()">复制链接</button>
+  </div>
+</div>
 
 <script>
 (function(){
@@ -527,6 +573,57 @@ window.vcpChat={
   },
   scrollToBottom:function(){autoScroll=true;toBottom(true)},
   setTheme:function(dark){document.documentElement.style.colorScheme=dark?'dark':'light'}
+};
+
+// ── 图片查看器 ──────────────────────────────────
+var viewer=document.getElementById('imgViewer');
+var viewerImg=document.getElementById('imgViewerImg');
+var currentImgUrl='';
+
+// 点击气泡内的图片 → 打开查看器
+C.addEventListener('click',function(e){
+  var img=e.target.closest('img');
+  if(!img)return;
+  // 忽略表情等小图
+  if(img.naturalWidth>0&&img.naturalWidth<60)return;
+  e.preventDefault();e.stopPropagation();
+  currentImgUrl=img.src||img.getAttribute('data-src')||'';
+  viewerImg.src=currentImgUrl;
+  viewer.classList.add('active');
+},true);
+
+// 点击背景关闭
+viewer.addEventListener('click',function(e){
+  if(e.target===viewer)closeImgViewer();
+});
+
+window.closeImgViewer=function(){
+  viewer.classList.remove('active');
+  viewerImg.src='';currentImgUrl='';
+};
+
+window.saveImage=function(){
+  if(!currentImgUrl)return;
+  // 通知 Kotlin 侧保存图片
+  if(window.VcpChatBridge&&window.VcpChatBridge.saveImage){
+    window.VcpChatBridge.saveImage(currentImgUrl);
+  } else {
+    // 回退：用 <a download> 触发浏览器下载
+    var a=document.createElement('a');
+    a.href=currentImgUrl;
+    a.download='image_'+Date.now()+'.png';
+    a.target='_blank';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  }
+  closeImgViewer();
+};
+
+window.copyImageUrl=function(){
+  if(!currentImgUrl)return;
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(currentImgUrl);
+  }
+  closeImgViewer();
 };
 
 if(window.VcpChatBridge&&window.VcpChatBridge.onReady)window.VcpChatBridge.onReady();
