@@ -804,15 +804,60 @@ private fun RagObserverWebView(
                         request: android.webkit.WebResourceRequest?,
                     ): android.webkit.WebResourceResponse? {
                         val url = request?.url?.toString() ?: return null
-                        // Inject bridge shim into HTML
                         if (url.endsWith(".html") && url.startsWith("file:///android_asset/")) {
                             val assetPath = url.removePrefix("file:///android_asset/")
                             try {
                                 val html = viewContext.assets.open(assetPath).bufferedReader().readText()
+                                val mobileAdapt = """
+<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'/>
+<script>
+$shimJs
+window.__vcpPlatform='android';
+</script>
+<style id='mobile-adapt'>
+/* 隐藏桌面标题栏和窗口控件 */
+#custom-title-bar,.window-controls,.window-controls-mac,.window-controls-win,
+#spectrum-canvas,.title-toolbar{display:none!important}
+/* 主容器适配手机 */
+.main-wrapper{max-width:100%!important;padding-top:0!important}
+.header-section{padding:8px 12px!important}
+/* 卡片适配 */
+.card-base{padding:14px!important;margin-bottom:12px!important;border-radius:12px!important}
+.card-base h3{font-size:0.95rem!important;gap:6px!important}
+.meta-info{gap:6px!important;font-size:0.75rem!important}
+.meta-pill{padding:1px 6px!important}
+/* 滚动容器 */
+#infoContainer{padding:0 10px 10px!important}
+/* 筛选栏适配 */
+.filter-bar{margin-bottom:8px!important;padding:3px!important;overflow-x:auto;flex-wrap:nowrap}
+.filter-btn{padding:5px 10px!important;font-size:0.78rem!important;white-space:nowrap}
+/* RAG 子项 */
+.rag-sub-item{padding:8px!important;margin-top:6px!important}
+.score-badge{font-size:0.72rem!important;padding:2px 6px!important}
+/* 文本内容 */
+.text-content{font-size:0.88rem!important;line-height:1.5!important}
+/* 操作按钮 - 更大的触摸目标 */
+.icon-btn{padding:8px!important;min-width:36px;min-height:36px}
+.approval-btn{padding:8px 16px!important;min-height:40px}
+.approval-actions{gap:8px!important}
+/* 核心标签 */
+.core-tag-pill{font-size:0.72rem!important;padding:1px 6px!important}
+.core-tags-container{gap:4px!important;margin-bottom:6px!important}
+/* 分数色标 */
+.score-high{background:#4caf50!important}.score-med{background:#ff9800!important}.score-low{background:#f44336!important}
+.score-badge{border-radius:4px;color:#fff;font-weight:600}
+/* 确保内容不溢出 */
+*{max-width:100%;box-sizing:border-box}
+img,svg,canvas{max-width:100%!important;height:auto}
+pre{overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0.8rem!important}
+/* 去掉桌面悬停效果（手机没有hover） */
+.card-base:hover{transform:none!important;box-shadow:var(--glass-shadow)!important}
+</style>
+"""
                                 val injected = if (html.contains("<head>", true)) {
                                     html.replaceFirst(
                                         Regex("<head>", RegexOption.IGNORE_CASE),
-                                        "<head>\n<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'/>\n<script>\n$shimJs\nwindow.__vcpPlatform='android';\n</script>\n",
+                                        "<head>\n$mobileAdapt",
                                     )
                                 } else html
                                 return android.webkit.WebResourceResponse(
