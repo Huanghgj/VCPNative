@@ -145,6 +145,7 @@ fun VcpNativeApp(
 
     LaunchedEffect(vcpLogClient) {
         vcpLogClient.messages.collect { message ->
+            android.util.Log.d("VcpNativeApp", "Notification received: ${message.type} / ${message.title} (total: ${allNotifications.size + 1})")
             allNotifications.add(message)
             toasts.add(message)
             while (allNotifications.size > 200) allNotifications.removeAt(0)

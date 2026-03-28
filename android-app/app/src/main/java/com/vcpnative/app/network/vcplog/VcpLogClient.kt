@@ -38,8 +38,13 @@ data class VcpLogMessage(
 )
 
 class VcpLogClient(
-    private val okHttpClient: OkHttpClient,
+    okHttpClient: OkHttpClient,
 ) {
+    // WebSocket 专用客户端：加心跳 ping + 无限 read timeout（长连接不能超时）
+    private val wsClient = okHttpClient.newBuilder()
+        .pingInterval(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _status = MutableStateFlow(VcpLogConnectionStatus.Disconnected)
@@ -98,7 +103,7 @@ class VcpLogClient(
         Log.d(TAG, "VCPLog connecting to: $url")
 
         val request = Request.Builder().url(url).build()
-        webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
+        webSocket = wsClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 _status.value = VcpLogConnectionStatus.Connected
                 reconnectAttempt = 0
@@ -106,6 +111,7 @@ class VcpLogClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                Log.d(TAG, "VCPLog message received (${text.length} chars): ${text.take(200)}")
                 parseAndEmit(text)
             }
 
@@ -164,7 +170,8 @@ class VcpLogClient(
             }
 
             if (message != null) {
-                _messages.tryEmit(message)
+                val emitted = _messages.tryEmit(message)
+                Log.d(TAG, "VCPLog emit ${message.type}/${message.title} (success=$emitted, subscribers=${_messages.subscriptionCount.value})")
             }
         }.onFailure {
             Log.w(TAG, "Failed to parse VCPLog message: $raw", it)
