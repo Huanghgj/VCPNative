@@ -884,27 +884,66 @@ pre{overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0.8rem!important}
 
                     override fun onPageFinished(view: WebView, url: String?) {
                         super.onPageFinished(view, url)
+                        // 通过 JS 直接注入配置并触发连接（不依赖 URL 参数）
+                        val wsBase = if (vcpLogUrl.startsWith("http")) {
+                            vcpLogUrl.replace("http://", "ws://").replace("https://", "wss://")
+                        } else if (vcpLogUrl.startsWith("ws")) vcpLogUrl
+                        else "ws://$vcpLogUrl"
+                        val safeUrl = wsBase.trimEnd('/').replace("'", "\\'")
+                        val safeKey = vcpLogKey.replace("'", "\\'")
+                        view.evaluateJavascript("""
+                            (function(){
+                                // 覆盖 URL 查询参数解析，直接注入配置
+                                var origSearch = window.location.search;
+                                var fakeParams = new URLSearchParams();
+                                fakeParams.set('vcpLogUrl', '$safeUrl');
+                                fakeParams.set('vcpLogKey', '$safeKey');
+                                // 劫持 URLSearchParams 构造函数让 config.js 读到正确值
+                                var OrigURLSearchParams = window.URLSearchParams;
+                                window.URLSearchParams = function(input) {
+                                    if (!input || input === origSearch) return fakeParams;
+                                    return new OrigURLSearchParams(input);
+                                };
+                                // 如果 config 已经初始化了，直接重连
+                                if (window.ragObserverConfig) {
+                                    window.ragObserverConfig.settings = {vcpLogUrl:'$safeUrl', vcpLogKey:'$safeKey'};
+                                    window.ragObserverConfig.isConnecting = false;
+                                    window.ragObserverConfig.autoConnect();
+                                }
+                            })();
+                        """.trimIndent(), null)
+                        android.util.Log.d("RagObserver", "Injected config: url=$safeUrl key=${safeKey.take(4)}...")
                         ready = true
-                        // Push any existing notifications
                         pushPendingMessages(view, notifications, pushedCount)
                     }
                 }
 
-                // 把 vcpLogUrl 和 vcpLogKey 通过 URL 查询参数传入
-                // RAG Observer 的 rag-observer-config.js 会从 URL params 读取
-                val wsUrl = if (vcpLogUrl.startsWith("http")) {
-                    vcpLogUrl.replace("http://", "ws://").replace("https://", "wss://")
-                } else if (vcpLogUrl.startsWith("ws")) vcpLogUrl
-                else "ws://$vcpLogUrl"
-                val encodedUrl = android.net.Uri.encode(wsUrl.trimEnd('/'))
-                val encodedKey = android.net.Uri.encode(vcpLogKey)
-                val fullUrl = "$RAG_OBSERVER_URL?vcpLogUrl=$encodedUrl&vcpLogKey=$encodedKey"
-                android.util.Log.d("RagObserver", "Loading: $fullUrl")
-                loadUrl(fullUrl)
+                loadUrl(RAG_OBSERVER_URL)
                 webViewRef[0] = this
             }
         },
     )
+
+    // settings 变化后重新注入配置（处理首次加载 settings 还是 null 的情况）
+    LaunchedEffect(vcpLogUrl, vcpLogKey, ready) {
+        if (!ready || vcpLogUrl.isBlank() || vcpLogKey.isBlank()) return@LaunchedEffect
+        val wv = webViewRef[0] ?: return@LaunchedEffect
+        val wsBase = if (vcpLogUrl.startsWith("http")) {
+            vcpLogUrl.replace("http://", "ws://").replace("https://", "wss://")
+        } else if (vcpLogUrl.startsWith("ws")) vcpLogUrl
+        else "ws://$vcpLogUrl"
+        val safeUrl = wsBase.trimEnd('/').replace("'", "\\'")
+        val safeKey = vcpLogKey.replace("'", "\\'")
+        wv.evaluateJavascript("""
+            (function(){
+                if(window.ragObserverConfig){
+                    window.ragObserverConfig.settings={vcpLogUrl:'$safeUrl',vcpLogKey:'$safeKey'};
+                    window.ragObserverConfig.isConnecting=false;
+                    window.ragObserverConfig.autoConnect();
+                }
+            })();
+        """.trimIndent(), null)
+    }
 
     // Push new messages as they arrive
     LaunchedEffect(notifications.size, ready) {
