@@ -15,6 +15,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -742,7 +743,7 @@ private const val RAG_OBSERVER_URL = "file:///android_asset/vcpchat/modules/rago
 
 /**
  * 嵌入式 RAG Observer WebView — 直接复用 VCPChat 桌面端的"灵视中心"。
- * 新的 VCPLog/VCPInfo 消息通过 JS bridge 推入 WebView。
+ * 通过 URL 查询参数传入 vcpLogUrl 和 vcpLogKey，让它自己建立 WebSocket 连接。
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -753,10 +754,14 @@ private fun RagObserverWebView(
     val context = androidx.compose.ui.platform.LocalContext.current
     val webViewRef = remember { arrayOfNulls<WebView>(1) }
     var ready by remember { mutableStateOf(false) }
-    // Track which messages have been pushed
     val pushedCount = remember { intArrayOf(0) }
 
-    // Read bridge shim for injection
+    // 从 AppContainer 读取设置，传给 RAG Observer 的 URL 查询参数
+    val app = context.applicationContext as com.vcpnative.app.VcpNativeApplication
+    val appSettings by app.appContainer.settingsRepository.settings.collectAsStateWithLifecycle(initialValue = null)
+    val vcpLogUrl = appSettings?.vcpLogUrl ?: ""
+    val vcpLogKey = appSettings?.vcpLogKey ?: ""
+
     val shimJs = remember {
         try {
             context.assets.open("vcpchat/bridge-shim.js").bufferedReader().readText()
@@ -877,7 +882,17 @@ pre{overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:0.8rem!important}
                     }
                 }
 
-                loadUrl(RAG_OBSERVER_URL)
+                // 把 vcpLogUrl 和 vcpLogKey 通过 URL 查询参数传入
+                // RAG Observer 的 rag-observer-config.js 会从 URL params 读取
+                val wsUrl = if (vcpLogUrl.startsWith("http")) {
+                    vcpLogUrl.replace("http://", "ws://").replace("https://", "wss://")
+                } else if (vcpLogUrl.startsWith("ws")) vcpLogUrl
+                else "ws://$vcpLogUrl"
+                val encodedUrl = android.net.Uri.encode(wsUrl.trimEnd('/'))
+                val encodedKey = android.net.Uri.encode(vcpLogKey)
+                val fullUrl = "$RAG_OBSERVER_URL?vcpLogUrl=$encodedUrl&vcpLogKey=$encodedKey"
+                android.util.Log.d("RagObserver", "Loading: $fullUrl")
+                loadUrl(fullUrl)
                 webViewRef[0] = this
             }
         },
