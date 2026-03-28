@@ -75,7 +75,7 @@ body{background:var(--bg);color:var(--text)}
 
 /* ── 气泡 ───────────────────────────────────────── */
 .b{
-  max-width:82%;padding:10px 16px;
+  max-width:80%;padding:10px 16px;
   font-size:15px;line-height:1.6;
   word-break:break-word;overflow-wrap:break-word;
 }
@@ -85,7 +85,8 @@ body{background:var(--bg);color:var(--text)}
 }
 .m.assistant .b{
   background:var(--ast-bubble);color:var(--ast-text);
-  border-radius:20px 20px 20px 4px;margin-right:36px;
+  border-radius:20px 20px 20px 4px;
+  max-width:100%;margin-right:0;
 }
 .m.system .b{
   background:var(--system-bg);color:var(--system-text);
@@ -96,7 +97,7 @@ body{background:var(--bg);color:var(--text)}
 .m.user+.m.user{margin-bottom:2px}
 .m.user+.m.user .b{border-radius:20px 6px 4px 20px}
 .m.assistant+.m.assistant{margin-bottom:2px}
-.m.assistant+.m.assistant .b{border-radius:6px 20px 20px 4px}
+.m.assistant+.m.assistant .b{border-radius:6px 20px 20px 4px;max-width:100%}
 
 /* ── 流式光标 ──────────────────────────────────── */
 .streaming .b::after{
