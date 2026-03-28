@@ -311,7 +311,9 @@ class ChatViewModel(
     }
 
     fun interruptMessage(messageId: String) {
-        if (messageId == activeRequestId) {
+        // 不管 messageId 是否匹配，只要在发送中就中断
+        // （用户长按的可能是 assistant 消息而不是 request 消息）
+        if (_isSending.value) {
             interrupt()
         }
     }
@@ -351,18 +353,14 @@ class ChatViewModel(
     }
 
     suspend fun deleteAssistantMessage(messageId: String): Result<Unit> = runCatching {
-        if (_isSending.value) {
-            error("当前正在生成回复，暂不支持删除消息。")
-        }
-
         val targetMessage = messages.value.firstOrNull { it.id == messageId }
             ?: error("找不到要删除的消息。")
 
-        if (targetMessage.role != "assistant") {
-            error("当前仅支持删除 AI 回复。")
-        }
-        if (targetMessage.status in setOf("draft", "streaming")) {
-            error("请先中止当前回复。")
+        // 如果正在流式输出这条消息，先中断再删
+        if (targetMessage.status in setOf("draft", "streaming") && _isSending.value) {
+            interrupt()
+            // 等一下让中断生效
+            kotlinx.coroutines.delay(200)
         }
 
         workspaceRepository.deleteMessage(

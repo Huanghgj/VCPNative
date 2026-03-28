@@ -777,54 +777,49 @@ function showCtxMenu(msgEl,touch){
     ctxMenu.appendChild(d);
   }
 
+  // 流式中：显示中止
   if(isStreaming){
     addItem('⏹','中止回复','danger',function(){
       if(window.VcpChatBridge)window.VcpChatBridge.onAction('interrupt',id);
     });
-  } else {
-    // 复制文本
-    addItem('📋','复制文本','',function(){
-      var bubble=msgEl.querySelector('.b');
-      if(bubble){
-        var text=bubble.innerText.replace(/\n{3,}/g,'\n\n').trim();
-        if(navigator.clipboard){
-          navigator.clipboard.writeText(text);
-        } else if(window.VcpChatBridge){
-          window.VcpChatBridge.onAction('copy',text);
-        }
-      }
-    });
+    addSep();
+  }
 
-    // 复制原文（Markdown）
+  // 有内容时：复制
+  var bubble=msgEl.querySelector('.b');
+  var hasContent=bubble&&bubble.innerText.trim().length>0;
+  if(hasContent){
+    addItem('📋','复制文本','',function(){
+      var text=bubble.innerText.replace(/\n{3,}/g,'\n\n').trim();
+      if(navigator.clipboard)navigator.clipboard.writeText(text);
+      else if(window.VcpChatBridge)window.VcpChatBridge.onAction('copy',text);
+    });
     addItem('📄','复制原文','',function(){
       if(window.VcpChatBridge)window.VcpChatBridge.onAction('copyRaw',id);
     });
-
     addSep();
-
-    if(role==='assistant'){
-      // 重新回复
-      addItem('🔄','重新回复','',function(){
-        if(window.VcpChatBridge)window.VcpChatBridge.onAction('retry',id);
-      });
-      // 编辑消息
-      addItem('✏️','编辑消息','',function(){
-        editMessage(id);
-      });
-      // 创建分支
-      addItem('🔀','创建分支','',function(){
-        if(window.VcpChatBridge)window.VcpChatBridge.onAction('branch',id);
-      });
-      addSep();
-    }
-
-    // 删除消息（带确认）
-    addItem('🗑️','删除消息','danger',function(){
-      if(confirm('确定要删除这条消息吗？')){
-        if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',id);
-      }
-    });
   }
+
+  // AI 专属操作
+  if(role==='assistant'&&!isStreaming){
+    addItem('🔄','重新回复','',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('retry',id);
+    });
+    addItem('✏️','编辑消息','',function(){
+      editMessage(id);
+    });
+    addItem('🔀','创建分支','',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('branch',id);
+    });
+    addSep();
+  }
+
+  // 所有消息都可以删除（包括用户消息、空白消息、中断的消息）
+  addItem('🗑️','删除消息','danger',function(){
+    if(confirm('确定要删除这条消息吗？')){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',id);
+    }
+  });
 
   // 定位菜单（适配刘海/安全区域）
   var x=touch.clientX,y=touch.clientY;
