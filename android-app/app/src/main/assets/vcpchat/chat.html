@@ -728,9 +728,20 @@ function processHtmlPreviews(container){
   var renders=container.querySelectorAll('.html-render:not([data-hp])');
   renders.forEach(function(el){
     el.setAttribute('data-hp','1');
-    // 完整 HTML 文档：用 innerHTML 作为源码（保留 onclick 等属性）
+    // 完整 HTML 文档：从原始消息内容恢复（innerHTML 可能被浏览器修改过）
     if(el.getAttribute('data-full-html')==='1'){
-      wrapAsPreview(el,el.innerHTML);
+      // 尝试修复被 sanitize/浏览器吃掉的 onclick 属性
+      var raw=el.innerHTML;
+      // 模式: <button class="move-btn" U', 1)"> → <button class="move-btn" onclick="rotate('U', 1)">
+      raw=raw.replace(/<button([^>]*?)\s+(\w+)',\s*(-?\d+)\)">/gi,function(_,attrs,move,dir){
+        return '<button'+attrs+' onclick="rotate(\''+move+'\', '+dir+')">';
+      });
+      // 模式: <button class="action-btn" > → 尝试绑定 scramble/reset
+      raw=raw.replace(/<button([^>]*class="action-btn"[^>]*)\s*>/gi,
+        '<button$1 onclick="scramble()">');
+      raw=raw.replace(/<button([^>]*class="reset-btn"[^>]*)\s*>/gi,
+        '<button$1 onclick="reset()">');
+      wrapAsPreview(el,raw);
       return;
     }
     // 其他情况：检测 textContent 里的 HTML（被转义展示的代码）
