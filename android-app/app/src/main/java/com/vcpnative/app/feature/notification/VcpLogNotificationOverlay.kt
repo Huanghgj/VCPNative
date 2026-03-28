@@ -747,8 +747,9 @@ private const val MAX_VISIBLE_TOASTS = 3
 private const val RAG_OBSERVER_URL = "file:///android_asset/vcpchat/observer.html"
 
 /**
- * 嵌入式 RAG Observer WebView — 直接复用 VCPChat 桌面端的"灵视中心"。
- * 通过 URL 查询参数传入 vcpLogUrl 和 vcpLogKey，让它自己建立 WebSocket 连接。
+ * 嵌入式灵视中心 WebView。
+ * 不自己建 WebSocket — 复用 Kotlin 层 VcpLogClient 的持久连接。
+ * 打开面板时推送历史消息，之后增量推送新消息。
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -757,18 +758,12 @@ private fun RagObserverWebView(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val app = context.applicationContext as com.vcpnative.app.VcpNativeApplication
+    val vcpLogStatus by app.appContainer.vcpLogClient.status.collectAsStateWithLifecycle()
     val webViewRef = remember { arrayOfNulls<WebView>(1) }
     var ready by remember { mutableStateOf(false) }
+    val pushedCount = remember { intArrayOf(0) }
 
-    // 从 AppContainer 读取设置，传给 RAG Observer 的 URL 查询参数
-    val app = context.applicationContext as com.vcpnative.app.VcpNativeApplication
-    val appSettings by app.appContainer.settingsRepository.settings.collectAsStateWithLifecycle(initialValue = null)
-    val vcpLogUrl = appSettings?.vcpLogUrl ?: ""
-    val vcpLogKey = appSettings?.vcpLogKey ?: ""
-
-    // observer.html 是手机原生页面，不需要桌面 bridge shim
-
-    // WebView 生命周期跟随面板可见性
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose {
             webViewRef[0]?.let { wv ->
@@ -777,6 +772,7 @@ private fun RagObserverWebView(
                 wv.destroy()
                 webViewRef[0] = null
                 ready = false
+                pushedCount[0] = 0
             }
         }
     }
@@ -792,15 +788,10 @@ private fun RagObserverWebView(
                 overScrollMode = View.OVER_SCROLL_NEVER
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                @Suppress("DEPRECATION")
-                settings.allowFileAccessFromFileURLs = true
-                @Suppress("DEPRECATION")
-                settings.allowUniversalAccessFromFileURLs = true
 
                 webChromeClient = object : WebChromeClient() {
                     override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
-                        android.util.Log.d("RagObserver", "[${msg.lineNumber()}] ${msg.message()}")
+                        android.util.Log.d("Observer", "[${msg.lineNumber()}] ${msg.message()}")
                         return true
                     }
                 }
@@ -809,7 +800,10 @@ private fun RagObserverWebView(
                     override fun onPageFinished(view: WebView, url: String?) {
                         super.onPageFinished(view, url)
                         ready = true
-                        connectObserverWebSocket(view, vcpLogUrl, vcpLogKey)
+                        // 推送历史消息
+                        pushAllToObserver(view, notifications, pushedCount)
+                        // 设置连接状态
+                        syncConnectionStatus(view, vcpLogStatus)
                     }
                 }
 
@@ -819,24 +813,103 @@ private fun RagObserverWebView(
         },
     )
 
-    // settings 加载后连接（处理 settings 晚于 WebView 就绪的情况）
-    LaunchedEffect(vcpLogUrl, vcpLogKey, ready) {
+    // 新消息到达时增量推送
+    LaunchedEffect(notifications.size, ready) {
         if (!ready) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
-        connectObserverWebSocket(wv, vcpLogUrl, vcpLogKey)
+        pushNewToObserver(wv, notifications, pushedCount)
+    }
+
+    // 连接状态同步
+    LaunchedEffect(vcpLogStatus, ready) {
+        if (!ready) return@LaunchedEffect
+        val wv = webViewRef[0] ?: return@LaunchedEffect
+        syncConnectionStatus(wv, vcpLogStatus)
     }
 }
 
-/** 调用 observer.html 的 connectObserver(wsUrl, key) */
-private fun connectObserverWebSocket(webView: WebView, rawUrl: String, key: String) {
-    if (rawUrl.isBlank() || key.isBlank()) return
-    val wsUrl = when {
-        rawUrl.startsWith("http://") -> rawUrl.replace("http://", "ws://")
-        rawUrl.startsWith("https://") -> rawUrl.replace("https://", "wss://")
-        rawUrl.startsWith("ws") -> rawUrl
-        else -> "ws://$rawUrl"
-    }.trimEnd('/')
-    val safeUrl = wsUrl.replace("'", "\\'")
-    val safeKey = key.replace("'", "\\'")
-    webView.evaluateJavascript("if(window.connectObserver)connectObserver('$safeUrl','$safeKey');", null)
+/** 推送所有历史消息到灵视中心 */
+private fun pushAllToObserver(
+    webView: WebView,
+    notifications: List<VcpLogMessage>,
+    pushedCount: IntArray,
+) {
+    if (notifications.isEmpty()) return
+    val jsonArray = org.json.JSONArray()
+    for (msg in notifications) {
+        jsonArray.put(msgToJson(msg))
+    }
+    val b64 = android.util.Base64.encodeToString(
+        jsonArray.toString().toByteArray(Charsets.UTF_8),
+        android.util.Base64.NO_WRAP,
+    )
+    webView.evaluateJavascript(
+        "(function(){var s=atob('$b64');var b=new Uint8Array(s.length);for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);pushHistory(new TextDecoder().decode(b))})();",
+        null,
+    )
+    pushedCount[0] = notifications.size
+}
+
+/** 增量推送新消息 */
+private fun pushNewToObserver(
+    webView: WebView,
+    notifications: List<VcpLogMessage>,
+    pushedCount: IntArray,
+) {
+    val start = pushedCount[0]
+    if (start >= notifications.size) return
+    for (i in start until notifications.size) {
+        val json = msgToJson(notifications[i])
+        val b64 = android.util.Base64.encodeToString(
+            json.toString().toByteArray(Charsets.UTF_8),
+            android.util.Base64.NO_WRAP,
+        )
+        webView.evaluateJavascript(
+            "(function(){var s=atob('$b64');var b=new Uint8Array(s.length);for(var i=0;i<s.length;i++)b[i]=s.charCodeAt(i);pushMessage(new TextDecoder().decode(b))})();",
+            null,
+        )
+    }
+    pushedCount[0] = notifications.size
+}
+
+/** 同步连接状态到灵视中心 UI */
+private fun syncConnectionStatus(webView: WebView, status: VcpLogConnectionStatus) {
+    val (s, msg) = when (status) {
+        VcpLogConnectionStatus.Connected -> "open" to "已连接（由系统维持）"
+        VcpLogConnectionStatus.Connecting -> "connecting" to "连接中..."
+        VcpLogConnectionStatus.Error -> "error" to "连接异常"
+        VcpLogConnectionStatus.Disconnected -> "error" to "未连接"
+    }
+    webView.evaluateJavascript("if(window.setConnectionStatus)setConnectionStatus('$s','$msg');", null)
+}
+
+/** 将 VcpLogMessage 转为 observer.html 能理解的 JSON */
+private fun msgToJson(msg: VcpLogMessage): org.json.JSONObject {
+    return org.json.JSONObject().apply {
+        put("type", msg.type)
+        put("timestamp", msg.timestamp)
+        when (msg.type) {
+            "vcp_log" -> {
+                put("data", org.json.JSONObject().apply {
+                    put("tool_name", msg.toolName ?: "")
+                    put("status", "")
+                    put("content", msg.content)
+                    put("MaidName", msg.maidName ?: "")
+                })
+            }
+            "tool_approval_request" -> {
+                put("data", org.json.JSONObject().apply {
+                    put("requestId", msg.requestId ?: "")
+                    put("toolName", msg.toolName ?: "")
+                    put("maid", msg.maidName ?: "")
+                    put("args", msg.content)
+                })
+            }
+            else -> {
+                put("message", msg.content)
+                put("dbName", msg.toolName ?: "")
+                put("action", msg.title)
+            }
+        }
+    }
 }

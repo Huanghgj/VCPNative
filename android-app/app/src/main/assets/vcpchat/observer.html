@@ -352,26 +352,34 @@ function approve(rid,ok,btn){
   btn.parentElement.innerHTML='<div style="text-align:center;color:var(--text2);font-size:13px">'+(ok?'✓ 已允许':'✕ 已拒绝')+'</div>';
 }
 
-// ── WebSocket 连接（由 Kotlin 注入配置后调用）────
-var ws1=null,ws2=null;
-window.connectObserver=function(wsUrl,key){
-  if(!wsUrl||!key){updateStatus('error','未配置');return;}
-  updateStatus('connecting','连接中...');
-  // VCPInfo 通道
+// ── 数据由 Kotlin 推送（不自己建 WebSocket）────
+// Kotlin 的 VcpLogClient 一直在后台运行，收到消息后调用:
+//   pushMessage(jsonString) — 推送单条
+//   pushHistory(jsonArrayString) — 推送历史批量
+// 这样面板关闭时不会断连，打开时能看到历史
+
+window.pushMessage=function(jsonStr){
   try{
-    ws1=new WebSocket(wsUrl+'/vcpinfo/VCP_Key='+key);
-    ws1.onopen=function(){updateStatus('open','VCPInfo 已连接')};
-    ws1.onmessage=function(e){try{displayRagInfo(JSON.parse(e.data))}catch(x){}};
-    ws1.onclose=function(){updateStatus('error','VCPInfo 断开')};
-  }catch(e){updateStatus('error','连接失败')}
-  // VCPLog 通道
-  try{
-    ws2=new WebSocket(wsUrl+'/VCPlog/VCP_Key='+key);
-    ws2.onmessage=function(e){try{displayRagInfo(JSON.parse(e.data))}catch(x){}};
-  }catch(e){}
+    var d=JSON.parse(jsonStr);
+    displayRagInfo(d);
+  }catch(e){console.error('pushMessage error:',e)}
 };
 
-// Kotlin 在 onPageFinished 时调用 connectObserver(url, key)
+window.pushHistory=function(jsonArrayStr){
+  try{
+    var arr=JSON.parse(jsonArrayStr);
+    // 按时间正序推送（最新的最后推，prepend 后在最上面）
+    for(var i=0;i<arr.length;i++){
+      try{displayRagInfo(arr[i])}catch(e){}
+    }
+  }catch(e){console.error('pushHistory error:',e)}
+};
+
+// 状态由 Kotlin 设置
+window.setConnectionStatus=function(status,msg){
+  updateStatus(status,msg);
+};
+
 if(window.VcpChatBridge&&window.VcpChatBridge.onReady)window.VcpChatBridge.onReady();
 </script>
 </body>
