@@ -55,6 +55,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -331,19 +332,23 @@ fun VcpLogSidebarPanel(
                 }
             }
 
-            val filtered = remember(notifications.size, selectedTab) {
-                when (selectedTab) {
-                    "rag" -> notifications.filter {
-                        it.type == "RAG_RETRIEVAL_DETAILS" || it.type == "DailyNote"
+            // 用 derivedStateOf 避免每次 notifications.size 变化都重建列表
+            val filtered by remember(selectedTab) {
+                derivedStateOf {
+                    when (selectedTab) {
+                        "observer" -> emptyList() // observer tab 不用 Compose 列表
+                        "rag" -> notifications.filter {
+                            it.type == "RAG_RETRIEVAL_DETAILS" || it.type == "DailyNote"
+                        }
+                        "tool" -> notifications.filter {
+                            it.type == "vcp_log" && it.toolName != null
+                        }
+                        "approval" -> notifications.filter { it.isApprovalRequest }
+                        "note" -> notifications.filter {
+                            it.type == "daily_note_created" || it.type == "DailyNote"
+                        }
+                        else -> notifications.toList()
                     }
-                    "tool" -> notifications.filter {
-                        it.type == "vcp_log" && it.toolName != null
-                    }
-                    "approval" -> notifications.filter { it.isApprovalRequest }
-                    "note" -> notifications.filter {
-                        it.type == "daily_note_created" || it.type == "DailyNote"
-                    }
-                    else -> notifications.toList()
                 }
             }
 
@@ -768,6 +773,7 @@ private fun RagObserverWebView(
         } catch (_: Exception) { "" }
     }
 
+    // WebView 生命周期跟随面板可见性
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose {
             webViewRef[0]?.let { wv ->
@@ -775,6 +781,8 @@ private fun RagObserverWebView(
                 wv.loadUrl("about:blank")
                 wv.destroy()
                 webViewRef[0] = null
+                ready = false
+                pushedCount[0] = 0
             }
         }
     }

@@ -74,7 +74,10 @@ data class TopicEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("topicId")],
+    indices = [
+        Index("topicId"),
+        Index(value = ["topicId", "createdAt"]),  // 按话题+时间排序查询（最常用）
+    ],
 )
 data class MessageEntity(
     @PrimaryKey val id: String,

@@ -221,17 +221,68 @@ fun ChatWebView(
         },
     )
 
-    // React to message list changes AFTER WebView is ready
+    // 跟踪每条消息的内容指纹，只同步真正变化的
+    val contentHash = remember { mutableMapOf<String, Int>() }
+
+    // 增量同步：只同步 delta，避免 O(n) 全扫描
     LaunchedEffect(messages, webViewReady) {
         if (!webViewReady) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
-        syncMessages(wv, messages, sentIds)
+
+        // 在后台线程计算 delta + Base64 编码
+        val jsCommands = kotlinx.coroutines.withContext(Dispatchers.Default) {
+            buildDeltaCommands(messages, sentIds, contentHash)
+        }
+
+        // 回到主线程批量执行 JS（一次 evaluateJavascript 调用）
+        if (jsCommands.isNotBlank()) {
+            wv.evaluateJavascript(jsCommands, null)
+        }
     }
 }
 
-/** Encode string to Base64 for safe JS transport (avoids all escaping issues). */
+/** Encode string to Base64 for safe JS transport. */
 private fun toBase64(text: String): String =
     Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+
+/** Build all JS commands for delta sync on background thread. */
+private fun buildDeltaCommands(
+    messages: List<MessageEntity>,
+    sentIds: MutableSet<String>,
+    contentHash: MutableMap<String, Int>,
+): String {
+    val sb = StringBuilder()
+    val currentIds = mutableSetOf<String>()
+
+    for (msg in messages) {
+        currentIds.add(msg.id)
+        val hash = msg.content.hashCode() xor msg.status.hashCode()
+
+        if (msg.id !in sentIds) {
+            // 新消息
+            val b64 = toBase64(msg.content)
+            sb.append("vcpChat.addMessage('${msg.id}','${msg.role}',b64d('$b64'),'${msg.status}');")
+            sentIds.add(msg.id)
+            contentHash[msg.id] = hash
+        } else if (contentHash[msg.id] != hash) {
+            // 内容或状态变了才更新
+            val b64 = toBase64(msg.content)
+            sb.append("vcpChat.updateMessage('${msg.id}',b64d('$b64'),'${msg.status}');")
+            contentHash[msg.id] = hash
+        }
+        // 未变化的消息：跳过（O(1)）
+    }
+
+    // 删除消息
+    val removed = sentIds.filter { it !in currentIds }
+    for (id in removed) {
+        sb.append("vcpChat.removeMessage('$id');")
+        sentIds.remove(id)
+        contentHash.remove(id)
+    }
+
+    return sb.toString()
+}
 
 /** Load all messages at once (initial load / topic switch). */
 private fun loadAllMessages(
@@ -250,42 +301,10 @@ private fun loadAllMessages(
         })
         sentIds.add(msg.id)
     }
-    // 用 Base64 传输 JSON，彻底避免引号/换行/特殊字符转义问题
     val b64 = toBase64(jsonArray.toString())
     webView.evaluateJavascript(
         "vcpChat.clearChat();vcpChat.loadHistory(b64d('$b64'));",
         null,
     )
     BridgeLogger.d(TAG, "Loaded ${messages.size} messages")
-}
-
-/** Incremental sync: add new messages, update changed ones. */
-private fun syncMessages(
-    webView: WebView,
-    messages: List<MessageEntity>,
-    sentIds: MutableSet<String>,
-) {
-    for (msg in messages) {
-        val b64Content = toBase64(msg.content)
-        if (msg.id !in sentIds) {
-            webView.evaluateJavascript(
-                "vcpChat.addMessage('${msg.id}','${msg.role}',b64d('$b64Content'),'${msg.status}');",
-                null,
-            )
-            sentIds.add(msg.id)
-        } else {
-            webView.evaluateJavascript(
-                "vcpChat.updateMessage('${msg.id}',b64d('$b64Content'),'${msg.status}');",
-                null,
-            )
-        }
-    }
-
-    // Remove deleted messages
-    val currentIds = messages.map { it.id }.toSet()
-    val removed = sentIds.filter { it !in currentIds }
-    for (id in removed) {
-        webView.evaluateJavascript("vcpChat.removeMessage('$id');", null)
-        sentIds.remove(id)
-    }
 }

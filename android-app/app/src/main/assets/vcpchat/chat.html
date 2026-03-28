@@ -177,7 +177,11 @@ body{background:var(--bg);color:var(--text)}
 }
 .tool-use::before{
   content:"⚙️";position:absolute;top:10px;left:10px;
-  font-size:16px;animation:spin 4s linear infinite;
+  font-size:16px;
+}
+/* 只在视口内才播放动画（省电） */
+@media(prefers-reduced-motion:no-preference){
+  .tool-use::before{animation:spin 4s linear infinite}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 .tool-use .tool-label{color:var(--tool-accent);font-weight:700;font-size:12px}
@@ -185,7 +189,10 @@ body{background:var(--bg);color:var(--text)}
   background:linear-gradient(90deg,#f1c40f,#fff,#4fc3f7,#f1c40f);
   background-size:300% 100%;
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  font-weight:700;animation:flow 4s linear infinite;
+  font-weight:700;
+}
+@media(prefers-reduced-motion:no-preference){
+  .tool-name{animation:flow 4s linear infinite}
 }
 @keyframes flow{to{background-position:-300% 0}}
 .tool-use .tool-body{

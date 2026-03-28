@@ -142,19 +142,24 @@ fun VcpNativeApp(
     val toasts = remember { mutableStateListOf<VcpLogMessage>() }
     val allNotifications = remember { mutableStateListOf<VcpLogMessage>() }
     var sidebarVisible by remember { mutableStateOf(false) }
+    // 用 derivedStateOf 避免每条消息都触发 bottom bar badge 重组
+    val notificationCount by remember { derivedStateOf { allNotifications.size } }
 
     LaunchedEffect(vcpLogClient) {
         vcpLogClient.messages.collect { message ->
-            android.util.Log.d("VcpNativeApp", "Notification received: ${message.type} / ${message.title} (total: ${allNotifications.size + 1})")
             allNotifications.add(message)
             toasts.add(message)
-            while (allNotifications.size > 200) allNotifications.removeAt(0)
+            // 限制列表大小：用 subList + clear 替代 removeAt(0) 的 O(n) 复制
+            if (allNotifications.size > 200) {
+                val excess = allNotifications.size - 200
+                allNotifications.subList(0, excess).clear()
+            }
         }
     }
 
-    val notificationState = remember(vcpLogStatus, allNotifications.size, sidebarVisible) {
+    val notificationState = remember(vcpLogStatus, notificationCount, sidebarVisible) {
         VcpLogNotificationState(
-            unreadCount = allNotifications.size,
+            unreadCount = notificationCount,
             connectionStatus = vcpLogStatus,
             onToggleSidebar = { sidebarVisible = !sidebarVisible },
         )

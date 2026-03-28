@@ -64,8 +64,10 @@ object BridgeLogger {
     fun w(module: String, msg: String) = log(Level.WARN, module, msg)
     fun e(module: String, msg: String) = log(Level.ERROR, module, msg)
 
+    private val pendingFileWrites = java.util.concurrent.ConcurrentLinkedQueue<Entry>()
+    @Volatile private var flushScheduled = false
+
     fun log(level: Level, module: String, message: String) {
-        // Always write to logcat
         val logcatLevel = when (level) {
             Level.DEBUG -> Log.DEBUG
             Level.INFO -> Log.INFO
@@ -83,27 +85,40 @@ object BridgeLogger {
         while (_entries.size > MAX_MEMORY_ENTRIES) {
             _entries.pollFirst()
         }
-        _entryCount.value = _entries.size
+        // 节流 StateFlow 更新：只在大小变化时更新
+        val newSize = _entries.size
+        if (_entryCount.value != newSize) {
+            _entryCount.value = newSize
+        }
 
-        // File
-        writeToFile(entry)
+        // 批量写文件：收集到队列，延迟刷盘
+        pendingFileWrites.add(entry)
+        if (!flushScheduled) {
+            flushScheduled = true
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor().schedule({
+                flushPendingWrites()
+                flushScheduled = false
+            }, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }
     }
 
-    // ---- File output ----
-
-    private fun writeToFile(entry: Entry) {
+    private fun flushPendingWrites() {
         val file = logFile ?: return
         try {
-            // Rotate if too large
             if (file.exists() && file.length() > MAX_LOG_FILE_SIZE) {
-                val backup = File(file.parent, "${file.nameWithoutExtension}_prev.log")
+                val backup = java.io.File(file.parent, "${file.nameWithoutExtension}_prev.log")
                 backup.delete()
                 file.renameTo(backup)
             }
-            file.appendText(entry.formatted() + "\n")
-        } catch (_: Exception) {
-            // Don't crash for logging failures
-        }
+            val sb = StringBuilder()
+            while (true) {
+                val entry = pendingFileWrites.poll() ?: break
+                sb.append(entry.formatted()).append('\n')
+            }
+            if (sb.isNotEmpty()) {
+                file.appendText(sb.toString())
+            }
+        } catch (_: Exception) {}
     }
 
     // ---- Read ----
