@@ -7,9 +7,18 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import android.annotation.SuppressLint
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -283,8 +292,9 @@ fun VcpLogSidebarPanel(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
 
             // 分栏筛选
-            var selectedTab by remember { mutableStateOf("all") }
+            var selectedTab by remember { mutableStateOf("observer") }
             val tabs = listOf(
+                "observer" to "灵视中心",
                 "all" to "全部",
                 "rag" to "RAG 召回",
                 "tool" to "工具调用",
@@ -336,6 +346,13 @@ fun VcpLogSidebarPanel(
                 }
             }
 
+            // 灵视中心 tab → 嵌入 RAG Observer WebView（完整复用 VCPChat 桌面端渲染）
+            if (selectedTab == "observer") {
+                RagObserverWebView(
+                    notifications = notifications,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else
             // 通知列表
             if (filtered.isEmpty()) {
                 Box(
@@ -721,3 +738,146 @@ private fun formatTime(millis: Long): String =
 
 private const val TOAST_DURATION_MS = 5000L
 private const val MAX_VISIBLE_TOASTS = 3
+private const val RAG_OBSERVER_URL = "file:///android_asset/vcpchat/modules/ragobserver/RAG_Observer.html"
+
+/**
+ * 嵌入式 RAG Observer WebView — 直接复用 VCPChat 桌面端的"灵视中心"。
+ * 新的 VCPLog/VCPInfo 消息通过 JS bridge 推入 WebView。
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun RagObserverWebView(
+    notifications: List<VcpLogMessage>,
+    modifier: Modifier = Modifier,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val webViewRef = remember { arrayOfNulls<WebView>(1) }
+    var ready by remember { mutableStateOf(false) }
+    // Track which messages have been pushed
+    val pushedCount = remember { intArrayOf(0) }
+
+    // Read bridge shim for injection
+    val shimJs = remember {
+        try {
+            context.assets.open("vcpchat/bridge-shim.js").bufferedReader().readText()
+        } catch (_: Exception) { "" }
+    }
+
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            webViewRef[0]?.let { wv ->
+                wv.stopLoading()
+                wv.loadUrl("about:blank")
+                wv.destroy()
+                webViewRef[0] = null
+            }
+        }
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { viewContext ->
+            WebView(viewContext).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                overScrollMode = View.OVER_SCROLL_NEVER
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                @Suppress("DEPRECATION")
+                settings.allowFileAccessFromFileURLs = true
+                @Suppress("DEPRECATION")
+                settings.allowUniversalAccessFromFileURLs = true
+
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                        android.util.Log.d("RagObserver", "[${msg.lineNumber()}] ${msg.message()}")
+                        return true
+                    }
+                }
+
+                webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                    ): android.webkit.WebResourceResponse? {
+                        val url = request?.url?.toString() ?: return null
+                        // Inject bridge shim into HTML
+                        if (url.endsWith(".html") && url.startsWith("file:///android_asset/")) {
+                            val assetPath = url.removePrefix("file:///android_asset/")
+                            try {
+                                val html = viewContext.assets.open(assetPath).bufferedReader().readText()
+                                val injected = if (html.contains("<head>", true)) {
+                                    html.replaceFirst(
+                                        Regex("<head>", RegexOption.IGNORE_CASE),
+                                        "<head>\n<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'/>\n<script>\n$shimJs\nwindow.__vcpPlatform='android';\n</script>\n",
+                                    )
+                                } else html
+                                return android.webkit.WebResourceResponse(
+                                    "text/html", "utf-8",
+                                    java.io.ByteArrayInputStream(injected.toByteArray(Charsets.UTF_8)),
+                                )
+                            } catch (_: Exception) {}
+                        }
+                        return null
+                    }
+
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        super.onPageFinished(view, url)
+                        ready = true
+                        // Push any existing notifications
+                        pushPendingMessages(view, notifications, pushedCount)
+                    }
+                }
+
+                loadUrl(RAG_OBSERVER_URL)
+                webViewRef[0] = this
+            }
+        },
+    )
+
+    // Push new messages as they arrive
+    LaunchedEffect(notifications.size, ready) {
+        if (!ready) return@LaunchedEffect
+        val wv = webViewRef[0] ?: return@LaunchedEffect
+        pushPendingMessages(wv, notifications, pushedCount)
+    }
+}
+
+private fun pushPendingMessages(
+    webView: WebView,
+    notifications: List<VcpLogMessage>,
+    pushedCount: IntArray,
+) {
+    val start = pushedCount[0]
+    if (start >= notifications.size) return
+    for (i in start until notifications.size) {
+        val msg = notifications[i]
+        // Reconstruct the original WebSocket message format that RAG Observer expects
+        val json = org.json.JSONObject().apply {
+            put("type", msg.type)
+            if (msg.type == "vcp_log") {
+                put("data", org.json.JSONObject().apply {
+                    put("tool_name", msg.toolName ?: "")
+                    put("content", msg.content)
+                    put("MaidName", msg.maidName ?: "")
+                })
+            } else {
+                put("message", msg.content)
+                put("dbName", msg.toolName ?: "")
+            }
+        }
+        val b64 = android.util.Base64.encodeToString(
+            json.toString().toByteArray(Charsets.UTF_8),
+            android.util.Base64.NO_WRAP,
+        )
+        // Call displayRagInfo (the main entry point of RAG Observer)
+        webView.evaluateJavascript(
+            "(function(){try{var d=JSON.parse(atob('$b64'));if(typeof displayRagInfo==='function')displayRagInfo(d);else if(window.__vcpBridge)window.__vcpBridge.emit('vcp-log-message',JSON.stringify(d));}catch(e){console.error('Push failed:',e);}})();",
+            null,
+        )
+    }
+    pushedCount[0] = notifications.size
+}

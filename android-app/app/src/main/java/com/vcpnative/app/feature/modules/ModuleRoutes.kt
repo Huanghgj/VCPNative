@@ -30,8 +30,9 @@ object VcpModules {
     val Dice = ModuleDef("dice/dice.html", "Dice")
     val VoiceChat = ModuleDef("voicechat/voicechat.html", "Voice Chat")
     val Themes = ModuleDef("themes/themes.html", "Themes")
+    val RagObserver = ModuleDef("ragobserver/RAG_Observer.html", "灵视中心")
 
-    val all = listOf(Notes, Memo, Forum, Canvas, Translator, Dice, VoiceChat, Themes)
+    val all = listOf(Notes, Memo, Forum, Canvas, Translator, Dice, VoiceChat, Themes, RagObserver)
 }
 
 data class ModuleDef(
