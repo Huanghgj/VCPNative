@@ -1,87 +1,307 @@
 /*
- * Mobile overrides for VCPChat desktop modules.
- * Injected by VcpModuleHost into every module WebView.
+ * 猫娘移动端覆盖样式喵～
+ * 由 VcpModuleHost 注入到每个模块 WebView 中。
+ * 樱花粉 + 薰衣草紫配色，柔软圆角，舒适阅读。
  */
 
-/* Ensure proper mobile viewport behavior */
+/* ── 基础重置 + 猫娘调性 ─────────────────────────── */
 html {
     -webkit-text-size-adjust: 100%;
     overflow-x: hidden;
 }
-
 body {
-    /* Desktop modules often have fixed widths or min-widths */
     min-width: unset !important;
     max-width: 100vw !important;
     overflow-x: hidden;
-    /* Safe area insets for notch/navigation bar */
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    font-size: 15px !important;
+    /* 猫娘全局配色注入 — 模块可以用这些变量喵 */
+    --neko-pink: #e8618c;
+    --neko-pink-light: #ffd9e3;
+    --neko-purple: #9c7cb5;
+    --neko-purple-light: #ede0f7;
+    --neko-mint: #5bbfad;
+    --neko-bg: #fff5f8;
+    --neko-surface: #fffbfc;
+    --neko-text: #2d1f28;
+    --neko-text-secondary: #8c7884;
+    --neko-radius: 16px;
+}
+@media(prefers-color-scheme:dark){
+  body {
+    --neko-pink: #ff8daf;
+    --neko-pink-light: #6b2040;
+    --neko-purple: #cdb0e0;
+    --neko-purple-light: #4a3560;
+    --neko-mint: #7ddfc3;
+    --neko-bg: #1a1520;
+    --neko-surface: #251f2a;
+    --neko-text: #ecdfe5;
+    --neko-text-secondary: #a08c98;
+  }
 }
 
-/* Desktop title bars (custom window chrome) — hide on mobile */
-.title-bar,
-.titlebar,
-.window-controls,
-.traffic-lights,
-.drag-region,
-#titleBar,
-.title-bar-container {
+/* ── AI 消息气泡透明化 ───────────────────────────── */
+/* AI 经常输出自带样式的 HTML (渐变背景、自定义颜色等)，
+   不透明的气泡背景会遮盖 AI 的自定义样式。
+   对标 VCPMobile 的半透明气泡设计。 */
+.message-item.assistant .md-content {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+/* ── 隐藏桌面窗口控件 ────────────────────────────── */
+.title-bar, .titlebar, .window-controls, .traffic-lights,
+.drag-region, #titleBar, .title-bar-container,
+#custom-title-bar, #minimize-notes-btn, #maximize-notes-btn,
+.window-control-btn {
     display: none !important;
 }
 
-/* Desktop sidebars that are too wide for mobile */
-.sidebar,
-.side-panel {
-    max-width: 280px;
+/* ── 笔记模块：移动端布局 ────────────────────────── */
+/* 桌面是左右分栏，手机改为上下布局或全屏切换 */
+.container {
+    flex-direction: column !important;
+    padding: 8px !important;
+    gap: 0 !important;
+}
+.resizer {
+    display: none !important;
+}
+.sidebar {
+    width: 100% !important;
+    min-width: unset !important;
+    max-width: 100% !important;
+    max-height: 40vh;
+    border-radius: var(--neko-radius) var(--neko-radius) 0 0 !important;
+    overflow-y: auto;
+}
+.sidebar-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: inherit;
+    padding: 8px !important;
+}
+.sidebar-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.sidebar-actions .button {
+    flex: 1;
+    min-width: 60px;
+    font-size: 13px !important;
+    padding: 8px 6px !important;
+}
+#searchInput {
+    width: 100% !important;
+    margin-bottom: 8px;
+    font-size: 15px !important;
+    padding: 10px 12px !important;
+}
+.content-area, .main-content, #contentArea, .editor-container {
+    width: 100% !important;
+    min-width: unset !important;
+    max-width: 100% !important;
+    flex: 1;
+    border-radius: 0 0 12px 12px !important;
+}
+/* 编辑器全宽 */
+.CodeMirror, .editor, #editor, textarea {
+    width: 100% !important;
+    min-width: unset !important;
+    font-size: 14px !important;
 }
 
-/* Tables: horizontal scroll instead of overflow */
+/* ── Forum/Memo：移动端布局 ──────────────────────── */
+.main-layout, .app-layout, .forum-layout {
+    flex-direction: column !important;
+    height: calc(100vh - 50px) !important;
+    margin-top: 50px !important;
+}
+/* Memo/Forum sidebar — 桌面 260px 固定，手机改全宽上方 */
+.app-layout > .sidebar,
+.forum-sidebar, .memo-sidebar, .left-panel, .panel-left {
+    width: 100% !important;
+    min-width: unset !important;
+    max-width: 100% !important;
+    max-height: 30vh;
+    overflow-y: auto;
+    border-right: none !important;
+    border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.1));
+}
+/* Memo/Forum 主内容区 */
+.app-layout > .main-content,
+.forum-content, .memo-content, .right-panel, .panel-right,
+.main-panel, .detail-panel, .content-area {
+    width: 100% !important;
+    min-width: unset !important;
+    flex: 1;
+    overflow-y: auto;
+}
+/* Memo 顶部导航栏适配 */
+#top-nav-bar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    height: 50px !important;
+    padding: 0 8px !important;
+    flex-wrap: nowrap !important;
+}
+#top-nav-bar .nav-left {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+#top-nav-bar .nav-title {
+    font-size: 14px !important;
+}
+#top-nav-bar .search-container {
+    flex: 1;
+    min-width: 0;
+}
+#top-nav-bar .search-glass {
+    width: 100% !important;
+    font-size: 14px !important;
+    padding: 6px 10px !important;
+}
+/* 隐藏桌面窗口控件（最小化/最大化/关闭）*/
+#top-nav-bar .nav-right #minimize-memo-btn,
+#top-nav-bar .nav-right #maximize-memo-btn,
+.nav-icon-btn[title="最小化"],
+.nav-icon-btn[title="最大化"] {
+    display: none !important;
+}
+/* Memo 日记内容区域适配 */
+.memo-detail, .memo-viewer, .note-content, .memo-editor {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 12px !important;
+}
+/* Memo 弹出面板 */
+.workbench-panel, .graph-panel {
+    width: 100% !important;
+    max-width: 100vw !important;
+    height: 60vh !important;
+    max-height: 60vh !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    border-radius: 16px 16px 0 0 !important;
+}
+/* Forum 帖子详情移动适配 */
+.post-detail, .post-content, .reply-content {
+    padding: 12px !important;
+}
+.post-card {
+    margin: 8px !important;
+}
+/* Forum 头像小一点 */
+.avatar-img, .reply-avatar {
+    width: 32px !important;
+    height: 32px !important;
+}
+
+/* ── Canvas 模块 ─────────────────────────────────── */
+.canvas-sidebar {
+    width: 100% !important;
+    max-height: 30vh;
+}
+.canvas-main {
+    width: 100% !important;
+}
+
+/* ── 通用响应式 ──────────────────────────────────── */
+/* 表格横向滚动 */
 table {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
-
-/* Code blocks: scroll instead of breaking layout */
+/* 代码块 */
 pre, code {
     max-width: 100%;
     overflow-x: auto;
     word-break: break-all;
 }
-
-/* Images: constrain to viewport */
+/* 媒体约束 */
 img, video, canvas, svg {
     max-width: 100% !important;
     height: auto;
 }
-
-/* Fix input fields that might have fixed desktop widths */
+/* 输入框 */
 input, textarea, select {
     max-width: 100% !important;
     box-sizing: border-box;
+    font-size: 16px !important; /* 防止 iOS 缩放 */
 }
-
-/* Modal dialogs: full-width on mobile */
-.modal-content,
-.dialog-content {
-    width: calc(100vw - 32px) !important;
-    max-width: calc(100vw - 32px) !important;
-    margin: 16px auto !important;
+/* 对话框全宽 */
+.modal-content, .dialog-content, .modal, .popup {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    max-height: 80vh !important;
+    margin: 12px auto !important;
 }
-
-/* Touch targets: minimum 44px */
-button, .btn, [role="button"],
-.clickable, .interactive {
+/* 触摸目标 44px */
+button, .btn, [role="button"], .clickable, .interactive {
     min-height: 44px;
     min-width: 44px;
 }
-
-/* Scrollbar: hide on mobile (use touch scrolling) */
+/* 滚动条 */
 ::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
+    width: 3px;
+    height: 3px;
 }
 ::-webkit-scrollbar-thumb {
     background: rgba(128, 128, 128, 0.3);
     border-radius: 2px;
+}
+
+/* ── Memo/Forum 按钮适配 ─────────────────────────── */
+.jelly-btn, .post-action-btn, .reply-submit-btn {
+    min-height: 40px !important;
+    font-size: 14px !important;
+    padding: 8px 16px !important;
+}
+/* Memo 文件夹项 */
+.folder-item {
+    padding: 10px 12px !important;
+    min-height: 44px;
+}
+/* Memo 日记列表项 */
+.memo-card, .memo-item, .note-item {
+    padding: 10px 12px !important;
+}
+/* 设置弹窗在 memo 内 */
+.settings-modal, .modal-glass-content, .glass-modal {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    max-height: 80vh !important;
+    margin: auto !important;
+}
+
+/* ── 连接错误提示 ────────────────────────────────── */
+.vcp-mobile-error {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffc107;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 12px;
+    font-size: 14px;
+    text-align: center;
+}
+@media (prefers-color-scheme: dark) {
+    .vcp-mobile-error {
+        background: #332701;
+        color: #ffc107;
+        border-color: #664d00;
+    }
 }

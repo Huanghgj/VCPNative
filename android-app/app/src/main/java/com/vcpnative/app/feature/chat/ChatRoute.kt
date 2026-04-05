@@ -8,6 +8,10 @@ import android.net.Uri
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -41,10 +45,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Hearing
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DividerDefaults
@@ -123,6 +131,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -139,14 +148,27 @@ class ChatViewModel(
     private val streamSessionManager: StreamSessionManager,
     private val chatAttachmentManager: ChatAttachmentManager,
     private val topicSummarizer: TopicSummarizer,
+    private val modelUsageTracker: com.vcpnative.app.data.ModelUsageTracker? = null,
 ) : ViewModel() {
-    val messages: StateFlow<List<MessageEntity>> = workspaceRepository
+    val persistedMessages: StateFlow<List<MessageEntity>> = workspaceRepository
         .observeMessages(topicId)
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList(),
         )
+    private val _streamingMessage = MutableStateFlow<MessageEntity?>(null)
+    val streamingMessage: StateFlow<MessageEntity?> = _streamingMessage.asStateFlow()
+    val messages: StateFlow<List<MessageEntity>> = combine(
+        persistedMessages,
+        streamingMessage,
+    ) { storedMessages, liveMessage ->
+        mergeMessages(storedMessages, liveMessage)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
 
     val messageAttachments: StateFlow<List<MessageAttachmentEntity>> = workspaceRepository
         .observeMessageAttachments(topicId)
@@ -162,7 +184,28 @@ class ChatViewModel(
     val pendingAttachments: StateFlow<List<ChatAttachment>> = _pendingAttachments.asStateFlow()
     private val _runtimeNotice = MutableStateFlow<String?>(null)
     val runtimeNotice: StateFlow<String?> = _runtimeNotice.asStateFlow()
+    private val _sharedDraft = MutableStateFlow<String?>(null)
+    val sharedDraft: StateFlow<String?> = _sharedDraft.asStateFlow()
     private val activeRequestId = AtomicReference<String?>(null)
+
+    // FlowLock 心流锁：AI 回复完毕后自动续写
+    private val _flowLockActive = MutableStateFlow(false)
+    val flowLockActive: StateFlow<Boolean> = _flowLockActive.asStateFlow()
+    @Volatile private var flowLockPrompt: String = "请继续"
+    private val flowLockRetryCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val flowLockMaxRetries = 3
+
+    fun toggleFlowLock(customPrompt: String? = null) {
+        _flowLockActive.value = !_flowLockActive.value
+        flowLockRetryCount.set(0)
+        if (customPrompt != null) flowLockPrompt = customPrompt
+        Log.d(TAG, "FlowLock ${if (_flowLockActive.value) "activated" else "deactivated"}, prompt=$flowLockPrompt")
+    }
+
+    fun stopFlowLock() {
+        _flowLockActive.value = false
+        flowLockRetryCount.set(0)
+    }
 
     private data class PendingUserMessage(
         val text: String,
@@ -173,6 +216,18 @@ class ChatViewModel(
     init {
         viewModelScope.launch {
             settingsRepository.saveLastSession(agentId, topicId)
+        }
+        viewModelScope.launch {
+            persistedMessages.collect { storedMessages ->
+                val liveMessage = _streamingMessage.value ?: return@collect
+                if (liveMessage.status in setOf("draft", "streaming")) {
+                    return@collect
+                }
+                val persisted = storedMessages.firstOrNull { it.id == liveMessage.id } ?: return@collect
+                if (persisted.content == liveMessage.content && persisted.status == liveMessage.status) {
+                    _streamingMessage.value = null
+                }
+            }
         }
     }
 
@@ -209,6 +264,16 @@ class ChatViewModel(
 
     fun consumeRuntimeNotice() {
         _runtimeNotice.value = null
+    }
+
+    fun setSharedDraft(text: String) {
+        _sharedDraft.value = text
+    }
+
+    fun consumeSharedDraft(): String? {
+        val v = _sharedDraft.value
+        _sharedDraft.value = null
+        return v
     }
 
     fun sendMessage(draft: String) {
@@ -436,6 +501,7 @@ class ChatViewModel(
     private suspend fun runRequest(
         prepareRequest: suspend () -> PreparedRequest,
     ) {
+        _streamingMessage.value = null
         _isSending.value = true
         var assistantDraftId: String? = null
         var failureMessage = "未知错误"
@@ -465,6 +531,7 @@ class ChatViewModel(
                 Log.e(TAG, "Failed to persist request failure message for topic=$topicId", persistError)
                 _runtimeNotice.value = failureText
             }
+            _streamingMessage.value = null
         } finally {
             activeRequestId.set(null)
             _isSending.value = false
@@ -475,13 +542,29 @@ class ChatViewModel(
         prepared: PreparedRequest,
     ) {
         val compiledRequest = prepared.compiledRequest
+        // Record model usage for hot-models ranking (aligns with VCPChat)
+        modelUsageTracker?.let { tracker ->
+            viewModelScope.launch { runCatching { tracker.recordUsage(compiledRequest.model) } }
+        }
         val baseTimestamp = System.currentTimeMillis()
 
         prepared.pendingUserMessage?.let { pendingUser ->
+            // 把附件摘要附加到显示内容中，确保聊天气泡可见附件信息
+            val displayContent = buildString {
+                append(pendingUser.text)
+                pendingUser.attachments.forEach { att ->
+                    val name = att.name.ifBlank { "未知文件" }
+                    when {
+                        att.mimeType.startsWith("image/") -> append("\n\n[附加图片: $name]")
+                        att.imageFrames.isNotEmpty() -> append("\n\n[附加文件: $name (PDF)]")
+                        else -> append("\n\n[附加文件: $name]")
+                    }
+                }
+            }.trim()
             workspaceRepository.addMessage(
                 topicId = topicId,
                 role = "user",
-                content = pendingUser.text,
+                content = displayContent,
                 messageId = pendingUser.messageId,
                 createdAt = baseTimestamp,
                 attachments = pendingUser.attachments,
@@ -499,6 +582,15 @@ class ChatViewModel(
             messageId = compiledRequest.requestId,
             createdAt = baseTimestamp + if (prepared.pendingUserMessage != null) 1 else 0,
         )
+        _streamingMessage.value = MessageEntity(
+            id = compiledRequest.requestId,
+            topicId = topicId,
+            role = "assistant",
+            content = "",
+            status = "draft",
+            createdAt = baseTimestamp + if (prepared.pendingUserMessage != null) 1 else 0,
+            updatedAt = System.currentTimeMillis(),
+        )
 
         val assistantBuffer = StringBuilder()
         var lastPersistedContent = ""
@@ -507,7 +599,7 @@ class ChatViewModel(
         suspend fun persistAssistant(status: String, force: Boolean = false) {
             val content = assistantBuffer.toString()
             val now = System.currentTimeMillis()
-            if (!force && content == lastPersistedContent && now - lastPersistAt < ASSISTANT_STREAM_PERSIST_INTERVAL_MS) {
+            if (!force && content == lastPersistedContent && now - lastPersistAt < ASSISTANT_STREAM_CHECKPOINT_INTERVAL_MS) {
                 return
             }
             workspaceRepository.updateMessage(
@@ -524,12 +616,10 @@ class ChatViewModel(
         streamSessionManager.submit(compiledRequest).collect { event ->
             when (event) {
                 StreamSessionEvent.Started -> {
-                    workspaceRepository.updateMessage(
-                        topicId = topicId,
-                        messageId = compiledRequest.requestId,
+                    _streamingMessage.value = _streamingMessage.value?.copy(
                         content = assistantBuffer.toString(),
                         status = "streaming",
-                        syncCompatHistory = false,
+                        updatedAt = System.currentTimeMillis(),
                     )
                     lastPersistedContent = assistantBuffer.toString()
                     lastPersistAt = System.currentTimeMillis()
@@ -537,12 +627,13 @@ class ChatViewModel(
 
                 is StreamSessionEvent.TextDelta -> {
                     assistantBuffer.append(event.text)
+                    _streamingMessage.value = _streamingMessage.value?.copy(
+                        content = assistantBuffer.toString(),
+                        status = "streaming",
+                        updatedAt = System.currentTimeMillis(),
+                    )
                     val now = System.currentTimeMillis()
-                    if (
-                        assistantBuffer.length == event.text.length ||
-                        now - lastPersistAt >= ASSISTANT_STREAM_PERSIST_INTERVAL_MS ||
-                        '\n' in event.text
-                    ) {
+                    if (now - lastPersistAt >= ASSISTANT_STREAM_CHECKPOINT_INTERVAL_MS) {
                         persistAssistant(status = "streaming")
                     }
                 }
@@ -550,6 +641,7 @@ class ChatViewModel(
                 is StreamSessionEvent.Completed -> {
                     val finalText = event.fullText.ifBlank { assistantBuffer.toString() }
                     if (finalText.isBlank()) {
+                        _streamingMessage.value = null
                         workspaceRepository.deleteMessage(topicId, compiledRequest.requestId)
                         workspaceRepository.addMessage(
                             topicId = topicId,
@@ -561,17 +653,33 @@ class ChatViewModel(
                         // Replace buffer content safely: keep old content until persist succeeds
                         val snapshot = finalText
                         assistantBuffer.clear().append(snapshot)
+                        _streamingMessage.value = _streamingMessage.value?.copy(
+                            content = snapshot,
+                            status = "complete",
+                            updatedAt = System.currentTimeMillis(),
+                        )
                         persistAssistant(
                             status = "complete",
                             force = true,
                         )
                         tryAutoSummarize()
+                        // FlowLock：AI 完成后自动续写
+                        if (_flowLockActive.value) {
+                            viewModelScope.launch {
+                                delay(500) // 短暂延迟，等渲染完成
+                                if (_flowLockActive.value && flowLockRetryCount.get() < flowLockMaxRetries) {
+                                    Log.d(TAG, "FlowLock: auto-continuing (retry ${flowLockRetryCount.get()})")
+                                    sendMessage(flowLockPrompt)
+                                }
+                            }
+                        }
                     }
                 }
 
                 is StreamSessionEvent.Interrupted -> {
                     val partialText = event.partialText.ifBlank { assistantBuffer.toString() }
                     if (partialText.isBlank()) {
+                        _streamingMessage.value = null
                         workspaceRepository.deleteMessage(topicId, compiledRequest.requestId)
                         prepared.interruptedMessage?.let { message ->
                             workspaceRepository.addMessage(
@@ -584,6 +692,11 @@ class ChatViewModel(
                     } else {
                         val snapshot = partialText
                         assistantBuffer.clear().append(snapshot)
+                        _streamingMessage.value = _streamingMessage.value?.copy(
+                            content = snapshot,
+                            status = "interrupted",
+                            updatedAt = System.currentTimeMillis(),
+                        )
                         persistAssistant(
                             status = "interrupted",
                             force = true,
@@ -594,10 +707,16 @@ class ChatViewModel(
                 is StreamSessionEvent.Failed -> {
                     val partialText = event.partialText.ifBlank { assistantBuffer.toString() }
                     if (partialText.isBlank()) {
+                        _streamingMessage.value = null
                         workspaceRepository.deleteMessage(topicId, compiledRequest.requestId)
                     } else {
                         val snapshot = partialText
                         assistantBuffer.clear().append(snapshot)
+                        _streamingMessage.value = _streamingMessage.value?.copy(
+                            content = snapshot,
+                            status = "error",
+                            updatedAt = System.currentTimeMillis(),
+                        )
                         persistAssistant(
                             status = "error",
                             force = true,
@@ -609,6 +728,13 @@ class ChatViewModel(
                         content = event.message,
                         status = "error",
                     )
+                    // FlowLock：失败时递增重试计数
+                    if (_flowLockActive.value) {
+                        if (flowLockRetryCount.incrementAndGet() >= flowLockMaxRetries) {
+                            Log.w(TAG, "FlowLock: max retries reached, stopping")
+                            stopFlowLock()
+                        }
+                    }
                 }
             }
         }
@@ -624,7 +750,7 @@ class ChatViewModel(
     }
 
     companion object {
-        private const val ASSISTANT_STREAM_PERSIST_INTERVAL_MS = 240L
+        private const val ASSISTANT_STREAM_CHECKPOINT_INTERVAL_MS = 2_000L
         private const val TAG = "ChatViewModel"
 
         private fun buildBranchTitle(currentTitle: String): String =
@@ -636,6 +762,33 @@ class ChatViewModel(
 
         private fun buildUserMessageId(): String =
             "msg_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}_user"
+
+        private fun mergeMessages(
+            storedMessages: List<MessageEntity>,
+            liveMessage: MessageEntity?,
+        ): List<MessageEntity> {
+            if (liveMessage == null) {
+                return storedMessages
+            }
+
+            val existingIndex = storedMessages.indexOfFirst { it.id == liveMessage.id }
+            if (existingIndex < 0) {
+                return storedMessages + liveMessage
+            }
+
+            val persistedMessage = storedMessages[existingIndex]
+            if (
+                persistedMessage.content == liveMessage.content &&
+                persistedMessage.status == liveMessage.status &&
+                persistedMessage.updatedAt >= liveMessage.updatedAt
+            ) {
+                return storedMessages
+            }
+
+            return storedMessages.toMutableList().apply {
+                set(existingIndex, liveMessage)
+            }
+        }
 
         fun factory(
             appContainer: AppContainer,
@@ -652,6 +805,7 @@ class ChatViewModel(
                     streamSessionManager = appContainer.streamSessionManager,
                     chatAttachmentManager = appContainer.chatAttachmentManager,
                     topicSummarizer = appContainer.topicSummarizer,
+                    modelUsageTracker = appContainer.modelUsageTracker,
                 )
             }
         }
@@ -681,7 +835,9 @@ fun ChatRoute(
             topicId = topicId,
         ),
     )
+    val persistedMessages by viewModel.persistedMessages.collectAsStateWithLifecycle()
     val messages by viewModel.messages.collectAsStateWithLifecycle()
+    val streamingMessage by viewModel.streamingMessage.collectAsStateWithLifecycle()
     val messageAttachments by viewModel.messageAttachments.collectAsStateWithLifecycle()
     val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
@@ -703,6 +859,50 @@ fun ChatRoute(
         viewModel.importAttachments(uris)
     }
 
+    // Camera photo capture — fresh file per shot, cleaned up after import
+    val hasCamera = remember {
+        context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
+    }
+    var cameraPhotoFile by remember { mutableStateOf<java.io.File?>(null) }
+    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    fun prepareCameraUri(): Uri {
+        // Clean up stale camera files from previous sessions
+        context.cacheDir.listFiles { f -> f.name.startsWith("camera_") && f.name.endsWith(".jpg") }
+            ?.forEach { it.delete() }
+        val file = java.io.File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", file,
+        )
+        cameraPhotoFile = file
+        cameraPhotoUri = uri
+        return uri
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+    ) { success ->
+        val uri = cameraPhotoUri
+        if (success && uri != null) {
+            viewModel.importAttachments(listOf(uri))
+        }
+        // Clean up the cache file regardless of success
+        cameraPhotoFile?.delete()
+        cameraPhotoFile = null
+        cameraPhotoUri = null
+    }
+
+    // Consume share-intent data (text → draft, images → attachments)
+    LaunchedEffect(Unit) {
+        val (sharedText, sharedUri, sharedUris) = com.vcpnative.app.SharedIntentData.consume()
+        sharedText?.let { viewModel.setSharedDraft(it) }
+        val uris = buildList {
+            sharedUri?.let { add(it) }
+            sharedUris?.let { addAll(it) }
+        }
+        if (uris.isNotEmpty()) {
+            viewModel.importAttachments(uris)
+        }
+    }
+
     runtimeNotice?.let { message ->
         LaunchedEffect(message) {
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -719,10 +919,13 @@ fun ChatRoute(
             composerSessionKey = topicId,
             title = topicTitle ?: topicId,
             subtitle = agentName ?: agentId,
+            persistedMessages = persistedMessages,
             messages = messages,
+            liveMessage = streamingMessage,
             attachmentsByMessageId = attachmentsByMessageId,
             pendingAttachments = pendingAttachments,
             isSending = isSending,
+            initialDraft = viewModel.consumeSharedDraft().orEmpty(),
             onNavigateBack = onNavigateBack,
             onOpenTopics = onOpenTopics,
             onCreateTopic = {
@@ -747,6 +950,7 @@ fun ChatRoute(
             onInterruptAssistantMessage = viewModel::interruptMessage,
             onInterrupt = viewModel::interrupt,
             onPickAttachments = { attachmentPicker.launch(arrayOf("*/*")) },
+            onPickCamera = { if (hasCamera) cameraLauncher.launch(prepareCameraUri()) },
             onRemovePendingAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = onOpenAttachment,
         )
@@ -759,10 +963,13 @@ private fun ChatScreen(
     composerSessionKey: String,
     title: String,
     subtitle: String,
+    persistedMessages: List<MessageEntity>,
     messages: List<MessageEntity>,
+    liveMessage: MessageEntity?,
     attachmentsByMessageId: Map<String, List<MessageAttachmentEntity>>,
     pendingAttachments: List<ChatAttachment>,
     isSending: Boolean,
+    initialDraft: String = "",
     onNavigateBack: () -> Unit,
     onOpenTopics: () -> Unit,
     onCreateTopic: () -> Unit,
@@ -778,6 +985,7 @@ private fun ChatScreen(
     onInterruptAssistantMessage: (String) -> Unit,
     onInterrupt: () -> Unit,
     onPickAttachments: () -> Unit,
+    onPickCamera: () -> Unit,
     onRemovePendingAttachment: (String) -> Unit,
     onOpenAttachment: (String) -> Unit,
 ) {
@@ -787,7 +995,69 @@ private fun ChatScreen(
     var composerFocused by remember { mutableStateOf(false) }
     ChatPerformanceMetricsState(isSending = isSending)
 
+    // 自定义头像选择器：选图后转 base64，同时持久化到文件
+    var pendingAvatarTarget by remember { mutableStateOf("") }
+    val avatarDir = remember { java.io.File(context.filesDir, "avatars").apply { mkdirs() } }
+    var userAvatarB64 by remember { mutableStateOf("") }
+    var aiAvatarB64 by remember { mutableStateOf("") }
+
+    // 启动时从文件加载已保存的头像
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val userFile = java.io.File(avatarDir, "user.b64")
+            val aiFile = java.io.File(avatarDir, "ai.b64")
+            if (userFile.isFile) userAvatarB64 = userFile.readText()
+            if (aiFile.isFile) aiAvatarB64 = aiFile.readText()
+        }
+    }
+
+    val avatarPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val b64 = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri) ?: return@withContext null
+                    val bytes = inputStream.readBytes()
+                    inputStream.close()
+                    val finalBytes = if (bytes.size > 500 * 1024) {
+                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        val out = java.io.ByteArrayOutputStream()
+                        bitmap?.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+                        bitmap?.recycle()
+                        out.toByteArray()
+                    } else bytes
+                    "data:image/jpeg;base64," + android.util.Base64.encodeToString(
+                        finalBytes, android.util.Base64.NO_WRAP,
+                    )
+                } catch (e: Exception) {
+                    Log.e("Avatar", "Failed to load avatar: ${e.message}")
+                    null
+                }
+            } ?: return@launch
+            when (pendingAvatarTarget) {
+                "user" -> {
+                    userAvatarB64 = b64
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        java.io.File(avatarDir, "user.b64").writeText(b64)
+                    }
+                }
+                "ai" -> {
+                    aiAvatarB64 = b64
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        java.io.File(avatarDir, "ai.b64").writeText(b64)
+                    }
+                }
+            }
+            android.widget.Toast.makeText(context, "头像已更新喵~", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Scaffold(
+        // Bottom bar handles its own imePadding + navigationBarsPadding;
+        // prevent Scaffold from double-counting system bar insets.
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             // 毛玻璃风格顶栏 — 半透明 surface + 底部分割线
             Surface(
@@ -869,7 +1139,9 @@ private fun ChatScreen(
                 composerSessionKey = composerSessionKey,
                 pendingAttachments = pendingAttachments,
                 isSending = isSending,
+                initialDraft = initialDraft,
                 onPickAttachments = onPickAttachments,
+                onPickCamera = onPickCamera,
                 onRemovePendingAttachment = onRemovePendingAttachment,
                 onSendMessage = onSendMessage,
                 onInterrupt = onInterrupt,
@@ -878,50 +1150,65 @@ private fun ChatScreen(
         },
     ) { innerPadding ->
         // 单 WebView 渲染所有消息
-        ChatWebView(
-            messages = messages,
-            onAction = { action, value ->
-                when (action) {
-                    "copyRaw" -> {
-                        val msg = messages.find { it.id == value }
-                        if (msg != null) {
-                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                as android.content.ClipboardManager
-                            cm.setPrimaryClip(android.content.ClipData.newPlainText("raw", msg.content))
-                            android.widget.Toast.makeText(context, "已复制原文", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    "retry" -> onRetryAssistantMessage(value)
-                    "interrupt" -> onInterruptAssistantMessage(value)
-                    "send" -> {
-                        // AI 按钮点击 → 作为用户消息发送
-                        onSendMessage(value)
-                    }
-                    "saveEdit" -> {
-                        // 编辑保存：value = "messageId|||base64Content"
-                        val parts = value.split("|||", limit = 2)
-                        if (parts.size == 2) {
-                            val decoded = try {
-                                String(android.util.Base64.decode(parts[1], android.util.Base64.DEFAULT), Charsets.UTF_8)
-                            } catch (_: Exception) { parts[1] }
-                            scope.launch {
-                                onEditAssistantMessage(parts[0], decoded)
+        key(composerSessionKey) {
+            ChatWebView(
+                messages = persistedMessages,
+                liveMessage = liveMessage,
+                attachmentsByMessageId = attachmentsByMessageId,
+                userAvatar = userAvatarB64,
+                aiAvatar = aiAvatarB64,
+                onAction = { action, value ->
+                    when (action) {
+                        "copyRaw" -> {
+                            val msg = messages.find { it.id == value }
+                            if (msg != null) {
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("raw", msg.content))
+                                android.widget.Toast.makeText(context, "已复制原文", android.widget.Toast.LENGTH_SHORT).show()
                             }
                         }
+                        "retry" -> onRetryAssistantMessage(value)
+                        "interrupt" -> onInterruptAssistantMessage(value)
+                        "send" -> {
+                            // AI 按钮点击 → 作为用户消息发送
+                            onSendMessage(value)
+                        }
+                        "saveEdit" -> {
+                            // 编辑保存：value = "messageId|||base64Content"
+                            val parts = value.split("|||", limit = 2)
+                            if (parts.size == 2) {
+                                val decoded = try {
+                                    String(android.util.Base64.decode(parts[1], android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                } catch (_: Exception) { parts[1] }
+                                scope.launch {
+                                    onEditAssistantMessage(parts[0], decoded)
+                                }
+                            }
+                        }
+                        "branch" -> {
+                            scope.launch { onCreateBranchFromMessage(value) }
+                        }
+                        "delete" -> {
+                            scope.launch { onDeleteAssistantMessage(value) }
+                        }
+                        "regenerate" -> {
+                            onRetryAssistantMessage(value)
+                        }
+                        // 自定义头像：通知 Compose 侧打开图片选择器
+                        // value = "user" 或 "ai"，选完图后回调 WebView 设置头像
+                        "changeAvatar" -> {
+                            pendingAvatarTarget = value
+                            avatarPickerLauncher.launch("image/*")
+                        }
                     }
-                    "branch" -> {
-                        scope.launch { onCreateBranchFromMessage(value) }
-                    }
-                    "delete" -> {
-                        scope.launch { onDeleteAssistantMessage(value) }
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(MaterialTheme.colorScheme.background),
-        )
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .background(MaterialTheme.colorScheme.background),
+            )
+        }
     }
 }
 
@@ -946,13 +1233,33 @@ private fun ChatComposerBar(
     composerSessionKey: String,
     pendingAttachments: List<ChatAttachment>,
     isSending: Boolean,
+    initialDraft: String = "",
     onPickAttachments: () -> Unit,
+    onPickCamera: () -> Unit,
     onRemovePendingAttachment: (String) -> Unit,
     onSendMessage: (String) -> Unit,
     onInterrupt: () -> Unit,
     onFocusChanged: (Boolean) -> Unit,
 ) {
-    var draft by rememberSaveable(composerSessionKey) { mutableStateOf("") }
+    var draft by rememberSaveable(composerSessionKey) { mutableStateOf(initialDraft) }
+    // 语音输入状态
+    var isListening by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val hasCameraInComposer = remember {
+        context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
+    }
+    val speechAvailable = remember { android.speech.SpeechRecognizer.isRecognitionAvailable(context) }
+    // Runtime permission launcher for RECORD_AUDIO
+    var pendingVoiceStart by remember { mutableStateOf(false) }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            pendingVoiceStart = true
+        } else {
+            Toast.makeText(context, "需要麦克风权限才能使用语音输入", Toast.LENGTH_SHORT).show()
+        }
+    }
     val sendEnabled = remember(draft, pendingAttachments) {
         draft.isNotBlank() || pendingAttachments.isNotEmpty()
     }
@@ -1001,6 +1308,90 @@ private fun ChatComposerBar(
                     modifier = Modifier.size(24.dp),
                 )
             }
+            if (hasCameraInComposer) {
+                IconButton(
+                    onClick = onPickCamera,
+                    enabled = !isSending,
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.CameraAlt,
+                        contentDescription = "拍照",
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+            // 语音输入按钮
+            // Helper: start speech recognition (called after permission is granted)
+            fun startSpeechRecognition() {
+                if (isListening) return
+                val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                }
+                val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+                isListening = true
+                recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
+                    override fun onResults(results: android.os.Bundle?) {
+                        val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                        if (!matches.isNullOrEmpty()) { draft = draft + matches[0] }
+                        isListening = false
+                        recognizer.destroy()
+                    }
+                    override fun onError(error: Int) {
+                        isListening = false
+                        recognizer.destroy()
+                        val msg = when (error) {
+                            android.speech.SpeechRecognizer.ERROR_NO_MATCH -> "未识别到语音，请重试"
+                            android.speech.SpeechRecognizer.ERROR_NETWORK,
+                            android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络错误，语音识别不可用"
+                            android.speech.SpeechRecognizer.ERROR_AUDIO -> "录音错误"
+                            android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少麦克风权限"
+                            else -> "语音识别失败 (错误码: $error)"
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    }
+                    override fun onReadyForSpeech(p: android.os.Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(v: Float) {}
+                    override fun onBufferReceived(buf: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onPartialResults(partial: android.os.Bundle?) {}
+                    override fun onEvent(t: Int, p: android.os.Bundle?) {}
+                })
+                recognizer.startListening(intent)
+            }
+            // Trigger recognition after permission grant
+            if (pendingVoiceStart) {
+                pendingVoiceStart = false
+                startSpeechRecognition()
+            }
+            IconButton(
+                onClick = {
+                    if (isListening) return@IconButton
+                    if (!speechAvailable) {
+                        Toast.makeText(context, "此设备不支持语音识别", Toast.LENGTH_SHORT).show()
+                        return@IconButton
+                    }
+                    val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                        context, android.Manifest.permission.RECORD_AUDIO,
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    if (!hasMicPermission) {
+                        micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                        return@IconButton
+                    }
+                    startSpeechRecognition()
+                },
+                enabled = !isSending && speechAvailable,
+            ) {
+                Icon(
+                    imageVector = if (isListening) Icons.Outlined.Hearing else Icons.Outlined.Mic,
+                    contentDescription = "语音输入",
+                    modifier = Modifier.size(24.dp),
+                    tint = if (isListening) MaterialTheme.colorScheme.error
+                        else if (!speechAvailable) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        else LocalContentColor.current,
+                )
+            }
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
@@ -1029,14 +1420,29 @@ private fun ChatComposerBar(
                     )
                 }
             } else {
+                // 发送按钮：按压柔和缩放，不要太弹喵
+                var sendPressed by remember { mutableStateOf(false) }
+                val sendScale by animateFloatAsState(
+                    targetValue = if (sendPressed) 0.88f else 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    label = "send-bounce",
+                )
                 FloatingActionButton(
                     onClick = {
                         if (!sendEnabled) return@FloatingActionButton
+                        sendPressed = true
                         val snapshot = draft
                         draft = ""
                         onSendMessage(snapshot)
+                        // 弹回去
+                        sendPressed = false
                     },
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .graphicsLayer { scaleX = sendScale; scaleY = sendScale },
                     containerColor = if (sendEnabled) {
                         MaterialTheme.colorScheme.primary
                     } else {

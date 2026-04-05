@@ -47,6 +47,35 @@ body {
     align-items: center;
 }
 
+/* --- Sidebar Search --- */
+.sidebar-search {
+    padding: 0 10px 5px 10px;
+}
+
+.folder-search-input {
+    width: 100%;
+    padding: 8px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    outline: none;
+    transition: all 0.2s ease;
+    box-sizing: border-box;
+}
+
+.folder-search-input:focus {
+    border-color: var(--accent-color);
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 8px rgba(var(--accent-color-rgb, 74, 144, 226), 0.2);
+}
+
+.folder-search-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
 .folder-list {
     flex: 1;
     overflow-y: auto;
@@ -362,7 +391,7 @@ body {
     background: var(--accent-color);
     color: var(--text-on-accent);
     border-color: transparent;
-    box-shadow: 0 0 15px var(--accent-color);
+    box-shadow: 0 0 8px rgba(var(--accent-color-rgb, 74, 144, 226), 0.4);
 }
 
 .scope-toggle-btn svg {
@@ -1140,4 +1169,256 @@ body {
 /* 优化滚动条 */
 .workbench-reference-grid::-webkit-scrollbar {
     height: 6px;
+}
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+    :root {
+        --sidebar-width: 0px;
+    }
+
+    /* 顶部导航栏 */
+    #top-nav-bar {
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        gap: 8px;
+        height: auto;
+    }
+    #top-nav-bar .nav-left {
+        flex: 1;
+        min-width: 0;
+    }
+    #top-nav-bar .nav-left .nav-title {
+        font-size: 1rem;
+    }
+    #top-nav-bar .nav-right {
+        gap: 4px;
+    }
+    /* 隐藏桌面端窗口控制按钮 */
+    #minimize-memo-btn,
+    #maximize-memo-btn,
+    #close-memo-btn {
+        display: none;
+    }
+    .search-container {
+        flex: 1;
+    }
+    .search-glass {
+        width: 100% !important;
+        min-width: 0;
+        font-size: 0.85rem;
+    }
+
+    /* 侧边栏：抽屉模式 */
+    .app-layout {
+        flex-direction: column;
+        margin-top: 50px;
+        height: calc(100vh - 50px);
+    }
+    .sidebar {
+        width: 100%;
+        max-height: 0;
+        overflow: hidden;
+        border-right: none;
+        border-bottom: 1px solid var(--glass-border);
+        transition: max-height 0.3s ease;
+    }
+    .sidebar.mobile-open {
+        max-height: 45vh;
+        overflow-y: auto;
+    }
+    .sidebar-header {
+        padding: 12px 16px;
+    }
+    .folder-list {
+        padding: 0 8px 8px;
+    }
+    .folder-item {
+        padding: 10px 14px;
+        font-size: 0.9rem;
+    }
+    .sidebar-footer {
+        padding: 8px !important;
+    }
+
+    /* 主内容区 */
+    .main-content {
+        flex: 1;
+        overflow-y: auto;
+    }
+    .content-header {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 12px 16px;
+        gap: 8px;
+    }
+    .folder-title {
+        font-size: 1.1rem;
+    }
+    .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    /* 日记卡片网格：单列 */
+    .memo-grid {
+        grid-template-columns: 1fr;
+        padding: 8px 12px;
+        gap: 10px;
+    }
+    .memo-card {
+        padding: 14px;
+    }
+    .memo-card h3 {
+        font-size: 0.95rem;
+    }
+
+    /* 编辑器覆盖层 */
+    .editor-overlay {
+        padding: 0;
+    }
+    .editor-container {
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: 0;
+        display: flex;
+        flex-direction: column;
+    }
+    .editor-header {
+        padding: 12px 16px;
+    }
+    .editor-title-input {
+        font-size: 1rem;
+    }
+    .editor-body {
+        flex: 1;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .editor-textarea {
+        min-height: 40vh;
+        font-size: 0.9rem;
+    }
+    .editor-preview {
+        max-height: 30vh;
+        overflow-y: auto;
+    }
+    .editor-footer {
+        padding: 10px 16px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    /* 弹窗 */
+    .modal-glass-content {
+        width: 95% !important;
+        max-width: 95% !important;
+        padding: 20px !important;
+        border-radius: 14px !important;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    /* 批量操作 */
+    #batch-actions {
+        flex-wrap: wrap;
+        gap: 6px !important;
+        padding: 8px !important;
+    }
+    #batch-actions .glass-btn {
+        font-size: 0.75rem !important;
+        padding: 4px 8px !important;
+    }
+
+    /* 批量悬浮条 */
+    .batch-floating-bar {
+        left: 8px !important;
+        right: 8px !important;
+        bottom: 8px !important;
+        width: auto !important;
+        transform: none !important;
+    }
+
+    /* 工作台 */
+    .workbench-container {
+        border-radius: 0;
+        padding: 12px;
+    }
+    .workbench-header h2 {
+        font-size: 1.1rem;
+    }
+    .workbench-body {
+        flex-direction: column;
+    }
+    .workbench-reference-grid {
+        flex-direction: column;
+        overflow-x: visible;
+    }
+    .creation-form .form-row {
+        flex-direction: column;
+    }
+
+    /* 神经联想图 */
+    .graph-header {
+        flex-direction: column;
+        padding: 10px;
+        gap: 8px;
+    }
+    .source-info {
+        font-size: 0.85rem;
+    }
+    .node-detail-panel {
+        width: 90% !important;
+        max-width: 90% !important;
+        right: 5% !important;
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+    .graph-controls {
+        bottom: 10px;
+        right: 10px;
+    }
+
+    /* 右键菜单 → 底部弹出 */
+    .context-menu {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        top: auto !important;
+        width: 100% !important;
+        border-radius: 14px 14px 0 0 !important;
+        padding: 12px 0 !important;
+        max-height: 50vh;
+        overflow-y: auto;
+    }
+
+    /* 联想配置弹窗 */
+    #assoc-config-modal .modal-glass-content {
+        max-width: 95% !important;
+    }
+    #assoc-config-modal .modal-glass-content > div:nth-child(2) {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* 侧边栏切换按钮（仅移动端显示） */
+.mobile-sidebar-toggle {
+    display: none;
+    background: var(--accent-color);
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+@media (max-width: 768px) {
+    .mobile-sidebar-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
 }

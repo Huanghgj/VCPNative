@@ -18,6 +18,21 @@ class NotesFileManager(context: Context) {
     private val notesRoot: File = File(context.filesDir, NOTES_DIR).also { it.mkdirs() }
 
     /**
+     * Validate that a path is within the notes root directory.
+     * Prevents path traversal attacks (e.g. "../../data/databases/app.db") from JS bridge callers.
+     * Uses canonicalPath to resolve symlinks and ".." components before comparison.
+     */
+    private fun requireWithinNotesRoot(file: File): File {
+        val canonical = file.canonicalPath
+        val rootCanonical = notesRoot.canonicalPath
+        // Append separator to prevent prefix attacks: "/data/notes" must not match "/data/notes-evil"
+        require(canonical == rootCanonical || canonical.startsWith(rootCanonical + File.separator)) {
+            "Path outside notes root: $canonical"
+        }
+        return file
+    }
+
+    /**
      * Read the full notes tree as a JSON hierarchy.
      * Matches VCPChat's `readDirectoryStructure()` format.
      */
@@ -69,9 +84,9 @@ class NotesFileManager(context: Context) {
         val existingPath = data.optString("path", "")
 
         val targetFile = if (existingPath.isNotBlank() && File(existingPath).exists()) {
-            File(existingPath)
+            requireWithinNotesRoot(File(existingPath))
         } else {
-            val dir = File(dirPath).also { it.mkdirs() }
+            val dir = requireWithinNotesRoot(File(dirPath)).also { it.mkdirs() }
             val ext = if (title.endsWith(".md")) "" else ".txt"
             generateUniquePath(File(dir, "$title$ext"))
         }
@@ -107,7 +122,7 @@ class NotesFileManager(context: Context) {
      * Create a new folder.
      */
     fun createFolder(parentPath: String, folderName: String): JSONObject? {
-        val parent = if (parentPath.isBlank()) notesRoot else File(parentPath)
+        val parent = if (parentPath.isBlank()) notesRoot else requireWithinNotesRoot(File(parentPath))
         val newFolder = File(parent, folderName)
         if (newFolder.exists()) return null
         newFolder.mkdirs()
@@ -125,7 +140,7 @@ class NotesFileManager(context: Context) {
      * Rename a file or folder.
      */
     fun renameItem(oldPath: String, newName: String): JSONObject? {
-        val file = File(oldPath)
+        val file = requireWithinNotesRoot(File(oldPath))
         if (!file.exists()) return null
         val newFile = if (file.isDirectory) {
             File(file.parent, newName)
@@ -191,8 +206,49 @@ class NotesFileManager(context: Context) {
      * Read a single note's content.
      */
     fun copyNoteContent(filePath: String): String? {
-        val file = File(filePath)
+        val file = requireWithinNotesRoot(File(filePath))
         return if (file.exists()) file.readText() else null
+    }
+
+    /**
+     * Move files/folders to a new parent directory.
+     * @param itemPaths list of paths to move
+     * @param destPath target folder path
+     */
+    fun moveItems(itemPaths: List<String>, destPath: String): Boolean {
+        val dest = requireWithinNotesRoot(File(destPath))
+        if (!dest.exists() || !dest.isDirectory) return false
+        var allOk = true
+        for (path in itemPaths) {
+            val src = requireWithinNotesRoot(File(path))
+            if (!src.exists()) { allOk = false; continue }
+            val target = File(dest, src.name)
+            val ok = src.renameTo(if (target.exists()) generateUniquePath(target) else target)
+            Log.d(TAG, "Move: $path → ${dest.absolutePath} (success=$ok)")
+            if (!ok) allOk = false
+        }
+        return allOk
+    }
+
+    /**
+     * Save a pasted/dropped image to the notes directory.
+     * @param parentPath target folder (or notes root if blank)
+     * @param fileName image file name
+     * @param base64Data base64-encoded image data
+     */
+    fun savePastedImage(parentPath: String, fileName: String, base64Data: String): String? {
+        val parent = if (parentPath.isBlank()) notesRoot else requireWithinNotesRoot(File(parentPath))
+        parent.mkdirs()
+        val file = generateUniquePath(File(parent, fileName))
+        return try {
+            val data = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+            file.writeBytes(data)
+            Log.d(TAG, "Saved pasted image: ${file.absolutePath} (${data.size} bytes)")
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save pasted image", e)
+            null
+        }
     }
 
     private fun generateUniquePath(base: File): File {

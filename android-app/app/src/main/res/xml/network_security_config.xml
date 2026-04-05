@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  猫娘网络策略喵～
+  允许明文 HTTP：因为很多用户直连 IP 服务器（没有域名/HTTPS），
+  如果禁止明文会导致 CLEARTEXT not permitted 崩溃。
+  安全由上层（OkHttp TLS、用户自主配置）保障，不在网络策略层拦截。
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>

@@ -788,12 +788,28 @@ async function handleRegenerateResponse(originalAssistantMessage) {
                 // --- IMAGE PROCESSING ---
                 const imageAttachmentsPromises = msg.attachments.map(async att => {
                     const fileManagerData = att._fileManagerData || {};
-                    // Case 1: Scanned PDF converted to image frames
+                    // Case 1a: Scanned PDF with inline image frames (legacy/desktop)
                     if (fileManagerData.imageFrames && fileManagerData.imageFrames.length > 0) {
                         return fileManagerData.imageFrames.map(frameData => ({
                             type: 'image_url',
                             image_url: { url: `data:image/jpeg;base64,${frameData}` }
                         }));
+                    }
+                    // Case 1b: PDF with frames stored on disk (Android optimized)
+                    // pdfFrameCount > 0 indicates this is a scanned PDF; render via IPC
+                    if (fileManagerData.pdfFrameCount > 0 && att.src) {
+                        try {
+                            const result = await electronAPI.getFileAsBase64(att.src);
+                            if (result && result.success && result.base64Frames.length > 0) {
+                                return result.base64Frames.map(frameData => ({
+                                    type: 'image_url',
+                                    image_url: { url: `data:image/jpeg;base64,${frameData}` }
+                                }));
+                            }
+                        } catch (e) {
+                            console.error(`Failed to render PDF ${att.name} via IPC:`, e);
+                        }
+                        return null;
                     }
                     // Case 2: Regular image file (including GIFs that get framed)
                     if (att.type.startsWith('image/')) {
@@ -891,6 +907,22 @@ async function handleRegenerateResponse(originalAssistantMessage) {
             
             return { role: msg.role, content: finalContentPartsForVCP.length > 0 ? finalContentPartsForVCP : msg.content };
         }));
+
+        // 限制请求中的图片/媒体数量，防止 413 Payload Too Large
+        const MAX_MEDIA_IN_REQUEST = 5;
+        let mediaCount = 0;
+        for (let i = messagesForVCP.length - 1; i >= 0; i--) {
+            const content = messagesForVCP[i].content;
+            if (!Array.isArray(content)) continue;
+            for (let j = content.length - 1; j >= 0; j--) {
+                if (content[j].type === 'image_url') {
+                    mediaCount++;
+                    if (mediaCount > MAX_MEDIA_IN_REQUEST) {
+                        content[j] = { type: 'text', text: '[历史图片已省略]' };
+                    }
+                }
+            }
+        }
 
         if (agentConfig.systemPrompt) {
             let systemPromptContent = agentConfig.systemPrompt.replace(/\{\{AgentName\}\}/g, agentConfig.name);

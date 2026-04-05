@@ -1,6 +1,27 @@
 // RAG Observer Configuration Script
 // 从全局变量VCP_SETTINGS读取配置并应用主题
 
+const OBSERVER_NOTIFICATION_TYPES = new Set([
+    'vcp_log',
+    'daily_note_created',
+    'video_generation_status',
+    'tool_approval_request',
+    'tool_approval_response',
+    'connection_ack',
+    'notification',
+    'error'
+]);
+
+function dispatchObserverMessage(data) {
+    if (typeof window.enqueueRagObserverMessage === 'function') {
+        window.enqueueRagObserverMessage(data);
+        return;
+    }
+    if (typeof window.displayRagInfo === 'function') {
+        window.displayRagInfo(data);
+    }
+}
+
 class RAGObserverConfig {
     constructor() {
         this.settings = null;
@@ -23,7 +44,6 @@ class RAGObserverConfig {
             vcpLogKey: params.get('vcpLogKey') || ''
         };
         this.settings = settings;
-        console.log('Loaded settings from URL:', this.settings);
         return this.settings;
     }
 
@@ -78,7 +98,6 @@ class RAGObserverConfig {
         this.wsConnection.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                console.log('DEBUG: [RAG Observer] Received WebSocket Data:', data);
                 
                 // 检查是否为RAG、元思考链、Agent私聊预览或Agent梦境的详细信息
                 if (data.type === 'RAG_RETRIEVAL_DETAILS' ||
@@ -91,7 +110,7 @@ class RAGObserverConfig {
                     if (window.startSpectrumAnimation) {
                         window.startSpectrumAnimation(3000); // 动画持续3秒
                     }
-                    displayRagInfo(data); // displayRagInfo内部会处理这些类型
+                    dispatchObserverMessage(data);
                 }
             } catch (e) {
                 console.error('解析消息失败:', e);
@@ -141,22 +160,11 @@ class RAGObserverConfig {
         this.vcpLogConnection.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                const notificationTypes = new Set([
-                    'vcp_log',
-                    'daily_note_created',
-                    'video_generation_status',
-                    'tool_approval_request',
-                    'tool_approval_response',
-                    'connection_ack',
-                    'notification',
-                    'error'
-                ]);
-
-                if (data?.type && notificationTypes.has(data.type)) {
+                if (data?.type && OBSERVER_NOTIFICATION_TYPES.has(data.type)) {
                     if (window.startSpectrumAnimation) {
                         window.startSpectrumAnimation(3000);
                     }
-                    displayRagInfo(data);
+                    dispatchObserverMessage(data);
                 }
             } catch (e) {
                 console.error('[RAG Observer] 解析 VCPLog 消息失败:', e);

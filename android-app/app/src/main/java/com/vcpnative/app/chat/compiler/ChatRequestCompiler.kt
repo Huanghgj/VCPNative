@@ -83,36 +83,45 @@ class VcpCompatChatRequestCompiler(
         val compatHistoryByMessageId = topic?.let { loadCompatHistoryEntries(agentId, it.sourceTopicId) }.orEmpty()
         val stripThoughtChains = !settings.enableThoughtChainInjection
         val history = historyMessages.map { message ->
+            // Step 1: Strip thought chains (if disabled in settings)
             val textAfterThoughtStrip = if (stripThoughtChains) {
                 ThoughtChainStripper.strip(message.content)
             } else {
                 message.content
             }
-            val textAfterSanitizer = if (settings.enableContextSanitizer && message.role == "assistant") {
+            // Step 2: Apply regex rules BEFORE sanitization
+            // (Rules expect original HTML/Markdown structure to be intact)
+            // Fixed: was previously sanitize→regex which broke pattern matching
+            val textAfterRegex = applyContextRegexRules(
+                text = textAfterThoughtStrip,
+                role = message.role,
+                depth = depthMap[message.id],
+                regexRules = regexRules,
+            )
+            // Step 3: Sanitize HTML→Markdown AFTER regex rules
+            // (Now preserves structure via tree-walk instead of Html.fromHtml)
+            val finalText = if (settings.enableContextSanitizer && message.role == "assistant") {
                 val depth = depthMap[message.id]
                 if (depth != null && depth >= settings.contextSanitizerDepth) {
-                    ContextSanitizer.sanitize(textAfterThoughtStrip)
+                    ContextSanitizer.sanitize(textAfterRegex)
                 } else {
-                    textAfterThoughtStrip
+                    textAfterRegex
                 }
             } else {
-                textAfterThoughtStrip
+                textAfterRegex
             }
             compileMessage(
                 message = message,
-                normalizedText = applyContextRegexRules(
-                    text = textAfterSanitizer,
-                    role = message.role,
-                    depth = depthMap[message.id],
-                    regexRules = regexRules,
-                ),
+                normalizedText = finalText,
                 compatHistoryEntry = compatHistoryByMessageId[message.id],
             )
         }
         val foldedHistory = ContextFolder
             .foldMessages(
                 messages = history,
-                options = settings.toContextFoldingOptions(),
+                options = settings.toContextFoldingOptions(
+                    agentContextTokenLimit = agent?.contextTokenLimit ?: 0,
+                ),
             )
             .messages
         val normalizedUserDraft = pendingUserDraft?.let { draft ->
@@ -147,6 +156,15 @@ class VcpCompatChatRequestCompiler(
             }
         }
 
+        val trimmedMessages = trimExcessMedia(compiledMessages)
+
+        val enableThinking = agent?.extraJson?.let { json ->
+            runCatching {
+                val extra = JSONObject(json)
+                extra.optJSONObject("thinking")?.optString("type") == "enabled"
+            }.getOrNull()
+        } ?: false
+
         return CompiledChatRequest(
             agentId = agentId,
             topicId = topicId,
@@ -154,15 +172,57 @@ class VcpCompatChatRequestCompiler(
             endpoint = serviceConfig.chatUrl(settings.enableVcpToolInjection),
             apiBaseUrl = serviceConfig.apiRootUrl,
             apiKey = serviceConfig.apiKey,
-            model = agent?.model?.takeIf { it.isNotBlank() } ?: "gemini-pro",
+            model = agent?.model?.takeIf { it.isNotBlank() } ?: "gemini-2.5-flash",
             temperature = agent?.temperature ?: 0.7,
             maxTokens = agent?.maxOutputTokens,
             contextTokenLimit = agent?.contextTokenLimit,
             topP = agent?.topP,
             topK = agent?.topK,
             stream = agent?.streamOutput ?: true,
-            messages = compiledMessages,
+            thinking = if (enableThinking) true else null,
+            messages = trimmedMessages,
         )
+    }
+
+    /**
+     * 从后往前扫描编译后的消息列表，只保留最近 [MAX_MEDIA_IN_REQUEST] 个
+     * image_url 类型的 content part。更早的图片/媒体替换为文本占位符，
+     * 防止请求体过大导致 413。
+     */
+    private fun trimExcessMedia(messages: List<CompiledMessage>): List<CompiledMessage> {
+        // 先统计总 media 数量，不超限则直接返回原列表
+        val totalMedia = messages.sumOf { msg ->
+            msg.contentParts.count { it.type == "image_url" }
+        }
+        if (totalMedia <= MAX_MEDIA_IN_REQUEST) return messages
+
+        // 从后往前计数，标记允许保留的消息索引+part索引
+        var remaining = MAX_MEDIA_IN_REQUEST
+        // 用 (messageIndex, partIndex) 集合记录允许保留的 media
+        val allowed = mutableSetOf<Pair<Int, Int>>()
+        for (msgIdx in messages.indices.reversed()) {
+            val parts = messages[msgIdx].contentParts
+            for (partIdx in parts.indices.reversed()) {
+                if (parts[partIdx].type == "image_url") {
+                    if (remaining > 0) {
+                        allowed += msgIdx to partIdx
+                        remaining--
+                    }
+                }
+            }
+        }
+
+        return messages.mapIndexed { msgIdx, msg ->
+            if (msg.contentParts.none { it.type == "image_url" }) return@mapIndexed msg
+            val newParts = msg.contentParts.mapIndexed { partIdx, part ->
+                if (part.type == "image_url" && (msgIdx to partIdx) !in allowed) {
+                    CompiledMessagePart(type = "text", text = "[历史图片已省略]")
+                } else {
+                    part
+                }
+            }
+            msg.copy(contentParts = newParts)
+        }
     }
 
     private fun resolveActiveSystemPrompt(agent: AgentEntity?): String =
@@ -520,6 +580,22 @@ class VcpCompatChatRequestCompiler(
                 continue
             }
 
+            // PDF without inline imageFrames: render from disk on demand
+            val pdfFrameCount = fileManagerData?.optInt("pdfFrameCount", 0) ?: 0
+            if (pdfFrameCount > 0 || mimeType == "application/pdf") {
+                val sourceFile = resolveAttachmentFile(attachment, fileManagerData)
+                if (sourceFile != null) {
+                    val renderedFrames = renderPdfFrames(sourceFile)
+                    renderedFrames.forEach { frameData ->
+                        parts += CompiledMessagePart(
+                            type = "image_url",
+                            dataUrl = "data:image/jpeg;base64,$frameData",
+                        )
+                    }
+                }
+                continue
+            }
+
             if (!mimeType.startsWith("image/") && mimeType !in SUPPORTED_AUDIO_TYPES && !mimeType.startsWith("video/")) {
                 continue
             }
@@ -549,6 +625,13 @@ class VcpCompatChatRequestCompiler(
     ): String? {
         val sourceFile = resolveAttachmentFile(attachment, fileManagerData) ?: return null
         if (sourceFile.length() > MAX_ATTACHMENT_BYTES) return null
+        // 大图片压缩：先检查是否存在预压缩的 .compressed.jpg 缓存文件，
+        // 如果没有才现场压缩（并缓存结果供下次复用）。
+        // 这样第二次发送同一张图就不需要再解码+压缩了。
+        if (mimeType.startsWith("image/") && sourceFile.length() > IMAGE_COMPRESS_THRESHOLD) {
+            val compressed = loadOrCompressImage(sourceFile) ?: return null
+            return "data:image/jpeg;base64,$compressed"
+        }
         val encoded = runCatching {
             Base64.encodeToString(sourceFile.readBytes(), Base64.NO_WRAP)
         }.getOrNull() ?: return null
@@ -560,6 +643,10 @@ class VcpCompatChatRequestCompiler(
     ): String? {
         val sourceFile = resolveAttachmentFile(attachment) ?: return null
         if (sourceFile.length() > MAX_ATTACHMENT_BYTES) return null
+        if (attachment.mimeType.startsWith("image/") && sourceFile.length() > IMAGE_COMPRESS_THRESHOLD) {
+            val compressed = loadOrCompressImage(sourceFile) ?: return null
+            return "data:image/jpeg;base64,$compressed"
+        }
         val encoded = runCatching {
             Base64.encodeToString(sourceFile.readBytes(), Base64.NO_WRAP)
         }.getOrNull() ?: return null
@@ -611,6 +698,38 @@ class VcpCompatChatRequestCompiler(
         return null
     }
 
+    /**
+     * 渲染 PDF 每页为 JPEG base64 帧，逻辑与 ChatAttachmentManager 一致。
+     * 用于历史 PDF 附件的 compat JSON 中不再内联 imageFrames 的情况。
+     */
+    private fun renderPdfFrames(file: File): List<String> {
+        if (!file.isFile || file.length() > MAX_ATTACHMENT_BYTES) return emptyList()
+        return runCatching {
+            android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                android.graphics.pdf.PdfRenderer(descriptor).use { renderer ->
+                    val pageCount = minOf(renderer.pageCount, 12)
+                    (0 until pageCount).map { pageIndex ->
+                        renderer.openPage(pageIndex).use { page ->
+                            val baseEdge = maxOf(page.width, page.height).coerceAtLeast(1)
+                            val scale = minOf(2f, 1600f / baseEdge.toFloat())
+                            val bitmap = android.graphics.Bitmap.createBitmap(
+                                (page.width * scale).toInt().coerceAtLeast(1),
+                                (page.height * scale).toInt().coerceAtLeast(1),
+                                android.graphics.Bitmap.Config.ARGB_8888,
+                            )
+                            android.graphics.Canvas(bitmap).drawColor(android.graphics.Color.WHITE)
+                            page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            val output = java.io.ByteArrayOutputStream()
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, output)
+                            bitmap.recycle()
+                            Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
+                        }
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
     private fun loadCompatHistoryEntries(
         agentId: String,
         sourceTopicId: String,
@@ -636,9 +755,56 @@ class VcpCompatChatRequestCompiler(
         }
     }
 
+    /**
+     * 先找缓存的压缩文件（避免重复解码），没有才现场压缩并写入缓存。
+     * 缓存文件名 = 原文件名 + ".compressed.jpg"，和原始文件在同一目录。
+     */
+    private fun loadOrCompressImage(file: File): String? {
+        val cached = File(file.parentFile, "${file.name}.compressed.jpg")
+        if (cached.isFile && cached.lastModified() >= file.lastModified()) {
+            return runCatching {
+                Base64.encodeToString(cached.readBytes(), Base64.NO_WRAP)
+            }.getOrNull()
+        }
+        val result = compressImage(file) ?: return null
+        // 异步写缓存，不阻塞当前发送路径
+        runCatching {
+            cached.writeBytes(android.util.Base64.decode(result, android.util.Base64.NO_WRAP))
+        }
+        return result
+    }
+
+    private fun compressImage(file: File): String? = runCatching {
+        val options = android.graphics.BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+        // 仅对超大分辨率图片做采样缩放（最长边 > 4096px）
+        val maxDim = maxOf(options.outWidth, options.outHeight)
+        val sampleSize = if (maxDim > MAX_IMAGE_DIMENSION) {
+            var s = 1
+            while (maxDim / s > MAX_IMAGE_DIMENSION) s *= 2
+            s
+        } else 1
+        val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+        }
+        val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+            ?: return@runCatching null
+        val outputStream = java.io.ByteArrayOutputStream()
+        // 高质量 JPEG 92%，保留画质
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, outputStream)
+        bitmap.recycle()
+        Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+    }.getOrNull()
+
     private companion object {
         const val PENDING_USER_MESSAGE_ID = "__pending_user__"
         const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024 // 20 MB
+        const val IMAGE_COMPRESS_THRESHOLD = 4L * 1024 * 1024 // 4 MB 以上的图片才压缩
+        const val MAX_IMAGE_DIMENSION = 4096 // 仅缩放超大分辨率（>4K）
+        /** 请求中最多保留的图片/媒体附件数量，防止 413 Payload Too Large */
+        const val MAX_MEDIA_IN_REQUEST = 5
         val SUPPORTED_AUDIO_TYPES = setOf(
             "audio/wav",
             "audio/mpeg",
@@ -659,7 +825,9 @@ class VcpCompatChatRequestCompiler(
     )
 }
 
-private fun AppSettings.toContextFoldingOptions(): ContextFoldingOptions =
+private fun AppSettings.toContextFoldingOptions(
+    agentContextTokenLimit: Int = 0,
+): ContextFoldingOptions =
     ContextFoldingOptions(
         enabled = enableContextFolding,
         keepRecentMessages = contextFoldingKeepRecentMessages,
@@ -667,9 +835,16 @@ private fun AppSettings.toContextFoldingOptions(): ContextFoldingOptions =
         triggerCharCount = contextFoldingTriggerCharCount,
         excerptCharLimit = contextFoldingExcerptCharLimit,
         maxSummaryEntries = contextFoldingMaxSummaryEntries,
+        contextTokenLimit = agentContextTokenLimit,
     )
 
-private val compiledRegexCache = java.util.concurrent.ConcurrentHashMap<String, Regex?>()
+private val compiledRegexCache: MutableMap<String, Regex?> =
+    java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Regex?>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex?>?): Boolean =
+                size > 128
+        },
+    )
 private val REGEX_LITERAL_PATTERN = Regex("^/(.+)/([a-zA-Z]*)$")
 
 private fun String.toRegexOrNull(): Regex? =

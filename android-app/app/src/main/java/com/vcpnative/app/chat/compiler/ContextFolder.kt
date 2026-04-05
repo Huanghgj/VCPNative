@@ -8,8 +8,13 @@ data class ContextFoldingOptions(
     val keepRecentMessages: Int = 12,
     val triggerMessageCount: Int = 24,
     val triggerCharCount: Int = 24_000,
-    val excerptCharLimit: Int = 160,
+    /** Max chars per summary line. Raised from 160→500 to preserve more context.
+     *  160 chars was too aggressive and caused AI to lose nuance in old messages. */
+    val excerptCharLimit: Int = 500,
     val maxSummaryEntries: Int = 40,
+    /** Agent's context token limit. If set, overrides triggerCharCount with a
+     *  token-aware threshold (~4 chars/token). 0 = use triggerCharCount as-is. */
+    val contextTokenLimit: Int = 0,
 )
 
 data class ContextFoldingResult(
@@ -82,8 +87,15 @@ object ContextFolder {
         val olderEntries = nonSystemEntries.dropLast(normalized.keepRecentMessages)
         val recentEntries = nonSystemEntries.takeLast(normalized.keepRecentMessages)
 
+        // Use token-aware threshold when agent's context limit is known
+        // Rough estimate: ~4 chars per token, leave 25% headroom for system prompt + response
+        val effectiveCharThreshold = if (normalized.contextTokenLimit > 0) {
+            (normalized.contextTokenLimit * 4 * 0.75).toInt()
+        } else {
+            normalized.triggerCharCount
+        }
         val exceedsMessageThreshold = nonSystemEntries.size >= normalized.triggerMessageCount
-        val exceedsCharThreshold = approxCharsBefore >= normalized.triggerCharCount
+        val exceedsCharThreshold = approxCharsBefore >= effectiveCharThreshold
         if (!exceedsMessageThreshold && !exceedsCharThreshold) {
             return ContextFoldingResult(
                 messages = messages,

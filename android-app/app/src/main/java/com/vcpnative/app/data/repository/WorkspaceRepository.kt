@@ -2,6 +2,7 @@ package com.vcpnative.app.data.repository
 
 import androidx.room.withTransaction
 import com.vcpnative.app.data.files.AppFileStore
+import com.vcpnative.app.data.files.AtomicFileWriter
 import com.vcpnative.app.data.room.AgentDao
 import com.vcpnative.app.data.room.AgentEntity
 import com.vcpnative.app.data.room.AppDatabase
@@ -9,6 +10,7 @@ import com.vcpnative.app.data.room.MessageAttachmentDao
 import com.vcpnative.app.data.room.MessageAttachmentEntity
 import com.vcpnative.app.data.room.MessageDao
 import com.vcpnative.app.data.room.MessageEntity
+import com.vcpnative.app.data.room.RecentChatRow
 import com.vcpnative.app.data.room.RegexRuleDao
 import com.vcpnative.app.data.room.RegexRuleEntity
 import com.vcpnative.app.data.room.TopicDao
@@ -16,18 +18,37 @@ import com.vcpnative.app.data.room.TopicEntity
 import com.vcpnative.app.model.ChatAttachment
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.ConcurrentHashMap
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONException
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class HomeRecentChat(
+    val agent: AgentEntity,
+    val topic: TopicEntity,
+)
+
+data class HomeOverview(
+    val agents: List<AgentEntity>,
+    val recentChats: List<HomeRecentChat>,
+)
+
 interface WorkspaceRepository {
     fun observeAgents(): Flow<List<AgentEntity>>
+
+    fun observeHomeOverview(recentLimit: Int = 6): Flow<HomeOverview>
 
     fun observeTopics(agentId: String): Flow<List<TopicEntity>>
 
@@ -82,9 +103,24 @@ interface WorkspaceRepository {
 
     suspend fun loadMessages(topicId: String): List<MessageEntity>
 
+    /** Replace all messages in a topic from a JSON array (used by voicechat save). */
+    suspend fun replaceMessages(topicId: String, messagesJson: org.json.JSONArray)
+
+    /** 分页加载消息。offset=0 表示最旧的消息开始。返回按 createdAt ASC 排序。 */
+    suspend fun loadMessagesPaged(topicId: String, limit: Int = 50, offset: Int = 0): List<MessageEntity>
+
+    /** 获取话题下消息总数，用于分页 UI 计算。 */
+    suspend fun countMessages(topicId: String): Int
+
     suspend fun recentMessages(topicId: String, limit: Int = 12): List<MessageEntity>
 
     suspend fun loadRegexRules(agentId: String): List<RegexRuleEntity>
+
+    /** 搜索指定 agent 下包含 query 的 topicId 列表 */
+    suspend fun searchTopicIds(agentId: String, query: String): List<String>
+
+    /** 全局搜索消息内容 */
+    suspend fun searchMessages(query: String, limit: Int = 50): List<MessageEntity>
 }
 
 class RoomWorkspaceRepository(
@@ -97,6 +133,17 @@ class RoomWorkspaceRepository(
     private val fileStore: AppFileStore,
 ) : WorkspaceRepository {
     override fun observeAgents(): Flow<List<AgentEntity>> = agentDao.observeAll()
+
+    override fun observeHomeOverview(recentLimit: Int): Flow<HomeOverview> =
+        combine(
+            agentDao.observeAll(),
+            topicDao.observeLatestTopicPerAgent(recentLimit),
+        ) { agents, recentChats ->
+            HomeOverview(
+                agents = agents,
+                recentChats = recentChats.map(RecentChatRow::toHomeRecentChat),
+            )
+        }
 
     override fun observeTopics(agentId: String): Flow<List<TopicEntity>> =
         topicDao.observeByAgent(agentId)
@@ -278,26 +325,97 @@ class RoomWorkspaceRepository(
     override suspend fun loadMessages(topicId: String): List<MessageEntity> =
         messageDao.loadByTopic(topicId)
 
+    override suspend fun replaceMessages(topicId: String, messagesJson: org.json.JSONArray) {
+        messageDao.deleteByTopic(topicId)
+        val now = System.currentTimeMillis()
+        for (i in 0 until messagesJson.length()) {
+            val obj = messagesJson.optJSONObject(i) ?: continue
+            val role = obj.optString("role", "user")
+            val content = obj.optString("content", "")
+            val id = obj.optString("id", java.util.UUID.randomUUID().toString())
+            val ts = obj.optLong("timestamp", now + i)
+            messageDao.insert(
+                MessageEntity(
+                    id = id,
+                    topicId = topicId,
+                    role = role,
+                    content = content,
+                    status = "complete",
+                    createdAt = ts,
+                    updatedAt = ts,
+                ),
+            )
+        }
+    }
+
+    override suspend fun loadMessagesPaged(topicId: String, limit: Int, offset: Int): List<MessageEntity> =
+        messageDao.loadPaged(topicId, limit, offset)
+
+    override suspend fun countMessages(topicId: String): Int =
+        messageDao.countByTopic(topicId)
+
     override suspend fun recentMessages(topicId: String, limit: Int): List<MessageEntity> =
         messageDao.loadRecent(topicId, limit).asReversed()
 
     override suspend fun loadRegexRules(agentId: String): List<RegexRuleEntity> =
         regexRuleDao.loadByAgent(agentId)
 
-    private val lastHistorySyncTimeMs = AtomicLong(0L)
+    override suspend fun searchTopicIds(agentId: String, query: String): List<String> =
+        messageDao.searchTopicIds(agentId, query)
+
+    override suspend fun searchMessages(query: String, limit: Int): List<MessageEntity> =
+        messageDao.searchMessages(query, limit)
+
+    private val historySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val lastHistorySyncTimeMs = ConcurrentHashMap<String, AtomicLong>()
+    private val pendingHistorySyncJobs = ConcurrentHashMap<String, Job>()
+    // 流式传输期间节流：避免每个 TextDelta 都写一次文件（几十毫秒一次太频繁）
     private val historySyncMinIntervalMs = 2_000L
+    // 非流式变更也做轻度节流：编辑/删除消息后 500ms 内的连续操作合并为一次写入
+    private val historySyncNonStreamDebounceMs = 500L
 
     private suspend fun syncCompatHistory(topicId: String, debounce: Boolean = false) {
+        val lastSyncRef = lastHistorySyncTimeMs.getOrPut(topicId) { AtomicLong(0L) }
+        val interval = if (debounce) historySyncMinIntervalMs else historySyncNonStreamDebounceMs
+        val elapsed = System.currentTimeMillis() - lastSyncRef.get()
+
         if (debounce) {
-            val now = System.currentTimeMillis()
-            val lastSync = lastHistorySyncTimeMs.get()
-            if (now - lastSync < historySyncMinIntervalMs ||
-                !lastHistorySyncTimeMs.compareAndSet(lastSync, now)) {
-                // Skip this sync — too recent or lost CAS race. The final
-                // non-debounced call (when streaming completes) will flush everything.
+            if (elapsed < interval) {
                 return
             }
+            pendingHistorySyncJobs.remove(topicId)?.cancel()
+            performCompatHistorySync(topicId, lastSyncRef)
+            return
         }
+
+        if (elapsed < interval) {
+            pendingHistorySyncJobs.remove(topicId)?.cancel()
+            val pendingJob = historySyncScope.launch {
+                try {
+                    val remainingDelayMs = interval - (System.currentTimeMillis() - lastSyncRef.get())
+                    if (remainingDelayMs > 0) {
+                        delay(remainingDelayMs)
+                    }
+                    if (System.currentTimeMillis() - lastSyncRef.get() >= interval) {
+                        performCompatHistorySync(topicId, lastSyncRef)
+                    }
+                } finally {
+                    pendingHistorySyncJobs.remove(topicId, this.coroutineContext[Job])
+                }
+            }
+            pendingHistorySyncJobs[topicId] = pendingJob
+            return
+        }
+
+        pendingHistorySyncJobs.remove(topicId)?.cancel()
+        performCompatHistorySync(topicId, lastSyncRef)
+    }
+
+    private suspend fun performCompatHistorySync(
+        topicId: String,
+        lastSyncRef: AtomicLong,
+    ) {
+        lastSyncRef.set(System.currentTimeMillis())
         val topic = topicDao.findById(topicId) ?: return
         syncCompatHistory(topic)
     }
@@ -384,14 +502,15 @@ class RoomWorkspaceRepository(
                     },
                 )
             }
-            File(compatAgentDir, CONFIG_FILE_NAME).writeText(configJson.toString(2))
+            // Agent 配置保留 pretty-print（人类需要读，且写入频率低）
+            AtomicFileWriter.writeJson(File(compatAgentDir, CONFIG_FILE_NAME), configJson.toString(2))
 
             val regexJson = JSONArray().apply {
                 regexRules.forEach { rule ->
                     put(buildRegexRuleJson(rule))
                 }
             }
-            File(compatAgentDir, REGEX_RULES_FILE_NAME).writeText(regexJson.toString(2))
+            AtomicFileWriter.writeJson(File(compatAgentDir, REGEX_RULES_FILE_NAME), regexJson.toString(2))
 
             syncCompatAgentAvatar(
                 compatAgentDir = compatAgentDir,
@@ -462,7 +581,8 @@ class RoomWorkspaceRepository(
                     )
                 }
             }
-            historyFile.writeText(historyJson.toString(2))
+            // 不用 toString(2) pretty-print：省去格式化开销，1000 条消息差距明显
+            AtomicFileWriter.writeJson(historyFile, historyJson.toString())
         }
     }
 
@@ -487,8 +607,11 @@ class RoomWorkspaceRepository(
         attachment.extractedText?.takeIf(String::isNotBlank)?.let { extractedText ->
             fileManagerData.put("extractedText", extractedText)
         }
+        // imageFrames 不再内联到 compat JSON 中以减少磁盘占用。
+        // JS 侧通过 get-file-as-base64 IPC 按需读取 PDF 原文件并渲染帧。
+        // 仅标记帧数量供 JS 判断这是扫描版 PDF。
         readJsonArray(attachment.imageFramesJson)?.takeIf { it.length() > 0 }?.let { frames ->
-            fileManagerData.put("imageFrames", frames)
+            fileManagerData.put("pdfFrameCount", frames.length())
         }
 
         return JSONObject()
@@ -635,6 +758,12 @@ class RoomWorkspaceRepository(
         val SUPPORTED_AVATAR_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp")
     }
 }
+
+private fun RecentChatRow.toHomeRecentChat(): HomeRecentChat =
+    HomeRecentChat(
+        agent = agent,
+        topic = topic,
+    )
 
 private fun MessageAttachmentEntity.fileId(): String =
     if (hash.isNotBlank()) {

@@ -190,8 +190,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (highlightThemeStyle) {
             highlightThemeStyle.href = currentTheme === 'light'
-                ? "../vendor/atom-one-light.min.css"
-                : "../vendor/atom-one-dark.min.css";
+                ? "../../vendor/atom-one-light.min.css"
+                : "../../vendor/atom-one-dark.min.css";
         }
     }
     

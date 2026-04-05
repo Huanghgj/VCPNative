@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link rel="stylesheet" href="vendor/katex.min.css"/>
+<link rel="stylesheet" href="vendor/atom-one-dark.min.css"/>
+<script defer src="vendor/katex.min.js"></script>
+<script defer src="vendor/auto-render.min.js"></script>
+<script defer src="vendor/highlight.min.js"></script>
+<script defer src="vendor/mermaid.min.js"></script>
+<script defer src="vendor/morphdom.min.js"></script>
 <style>
 /* ── 重置 & 基础 ───────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -15,85 +22,396 @@ html,body{
   -webkit-text-size-adjust:100%;
 }
 
-/* ── 主题变量 ───────────────────────────────────── */
+/* ── 猫娘主题变量喵～ ────────────────────────────── */
+/* 樱花粉 + 薰衣草紫 + 奶油白，温暖柔软有活力喵 */
 :root{
-  --bg:#f2f2f7;
-  --surface:#fff;
-  --text:#1c1c1e;
-  --text-secondary:#8e8e93;
-  --user-bubble:#007aff;
+  --bg:#fff5f8;
+  --surface:#fffbfc;
+  --text:#2d1f28;
+  --text-secondary:#8c7884;
+  --user-bubble:linear-gradient(135deg,#e8618c 0%,#d4508a 100%);
+  --user-bubble-solid:#e8618c;
   --user-text:#fff;
-  --ast-bubble:#e9e9eb;
-  --ast-text:#1c1c1e;
-  --system-bg:rgba(142,142,147,0.12);
-  --system-text:#8e8e93;
-  --sep:rgba(60,60,67,0.12);
-  --link:#007aff;
-  --code-bg:rgba(0,0,0,0.05);
-  --pre-bg:#1e1e2e;
-  --pre-text:#cdd6f4;
-  --pre-header:#313244;
-  --scrollbar:rgba(0,0,0,0.15);
-  --tool-bg:linear-gradient(135deg,#1a3a5c 0%,#0d2137 100%);
-  --tool-accent:#4fc3f7;
-  --tool-text:#e0e0e0;
-  --thought-bg:rgba(142,142,147,0.08);
-  --thought-border:rgba(142,142,147,0.2);
-  --diary-bg:#fdfaf6;--diary-text:#5d4037;--diary-border:#eaddd0;
+  --ast-bubble:#f3e8f0;
+  --ast-text:#2d1f28;
+  --system-bg:rgba(156,124,181,0.1);
+  --system-text:#9c7cb5;
+  --sep:rgba(212,188,197,0.4);
+  --link:#d4508a;
+  --code-bg:rgba(232,97,140,0.06);
+  --pre-bg:#2a1f30;
+  --pre-text:#f0dae5;
+  --pre-header:#3d2e45;
+  --scrollbar:rgba(232,97,140,0.2);
+  --tool-bg:linear-gradient(135deg,#3d2e45 0%,#2a1f30 100%);
+  --tool-accent:#ff8daf;
+  --tool-text:#f0dae5;
+  --thought-bg:rgba(156,124,181,0.08);
+  --thought-border:rgba(156,124,181,0.2);
+  --diary-bg:#fef8f0;--diary-text:#6b4c5e;--diary-border:#f0ddd0;
 }
 @media(prefers-color-scheme:dark){
 :root{
-  --bg:#000;--surface:#1c1c1e;--text:#e5e5e5;--text-secondary:#8e8e93;
-  --user-bubble:#0a84ff;--user-text:#fff;
-  --ast-bubble:#2c2c2e;--ast-text:#e5e5e5;
-  --system-bg:rgba(142,142,147,0.16);--system-text:#8e8e93;
-  --sep:rgba(84,84,88,0.36);--link:#0a84ff;
-  --code-bg:rgba(255,255,255,0.08);
-  --pre-bg:#1e1e2e;--pre-text:#cdd6f4;--pre-header:#313244;
-  --scrollbar:rgba(255,255,255,0.15);
-  --tool-bg:linear-gradient(135deg,#0d2137 0%,#1a3a5c 100%);
-  --tool-accent:#4fc3f7;--tool-text:#e0e0e0;
-  --thought-bg:rgba(142,142,147,0.1);--thought-border:rgba(142,142,147,0.25);
-  --diary-bg:#2c2a3a;--diary-text:#d8d2c9;--diary-border:#4a485f;
+  --bg:#1a1520;--surface:#251f2a;--text:#ecdfe5;--text-secondary:#a08c98;
+  --user-bubble:linear-gradient(135deg,#d4508a 0%,#a83a6e 100%);
+  --user-bubble-solid:#ff8daf;--user-text:#fff;
+  --ast-bubble:#332b38;--ast-text:#ecdfe5;
+  --system-bg:rgba(156,124,181,0.15);--system-text:#cdb0e0;
+  --sep:rgba(74,63,78,0.6);--link:#ff8daf;
+  --code-bg:rgba(255,141,175,0.08);
+  --pre-bg:#1e1528;--pre-text:#f0dae5;--pre-header:#332840;
+  --scrollbar:rgba(255,141,175,0.2);
+  --tool-bg:linear-gradient(135deg,#1e1528 0%,#332840 100%);
+  --tool-accent:#ff8daf;--tool-text:#f0dae5;
+  --thought-bg:rgba(156,124,181,0.1);--thought-border:rgba(156,124,181,0.25);
+  --diary-bg:#2c2535;--diary-text:#e0d4d9;--diary-border:#4a3f55;
 }}
 body{background:var(--bg);color:var(--text)}
+
+/* ── 猫娘色色装饰元素喵～ ──────────────────────── */
+/* 彩虹渐变流光 — 用在特殊标题和强调文字上 */
+@keyframes neko-rainbow{
+  0%{background-position:0% 50%}
+  50%{background-position:100% 50%}
+  100%{background-position:0% 50%}
+}
+/* 星星闪烁 */
+@keyframes neko-sparkle{
+  0%,100%{opacity:0;transform:scale(0) rotate(0deg)}
+  50%{opacity:1;transform:scale(1) rotate(180deg)}
+}
+/* 心跳脉动 */
+@keyframes neko-heartbeat{
+  0%,100%{transform:scale(1)}
+  15%{transform:scale(1.15)}
+  30%{transform:scale(1)}
+  45%{transform:scale(1.1)}
+}
+/* 渐变边框流动 */
+@keyframes neko-border-flow{
+  0%{border-color:var(--user-bubble-solid,#e8618c)}
+  33%{border-color:#9c7cb5}
+  66%{border-color:#5bbfad}
+  100%{border-color:var(--user-bubble-solid,#e8618c)}
+}
+
+/* 用户气泡彩虹光晕 — 发送成功后短暂闪一下 */
+.m.user .b{
+  position:relative;
+}
+.m.user .b::before{
+  content:'';position:absolute;inset:-2px;z-index:-1;
+  border-radius:24px 24px 8px 24px;
+  background:linear-gradient(135deg,#e8618c,#9c7cb5,#5bbfad,#e8618c);
+  background-size:300% 300%;
+  opacity:0;
+  transition:opacity 0.5s ease;
+}
+/* 新消息刚出现时短暂闪光 */
+.m.user:last-child .b::before{
+  opacity:0.28;
+}
+
+/* 助理气泡底部装饰猫爪印 */
+.m.assistant .b{position:relative;overflow:visible}
+.m.assistant:last-child .b::after{
+  content:'🐾';position:absolute;bottom:-8px;right:12px;
+  font-size:10px;opacity:0.25;pointer-events:none;
+}
+
+/* 系统消息两侧猫猫装饰线 */
+.m.system .b{position:relative}
+.m.system .b::before{content:'~ ';opacity:0.4;font-style:italic}
+.m.system .b::after{content:' ~';opacity:0.4;font-style:italic}
+
+/* 星星闪烁粒子容器 — 用于特殊消息 */
+.neko-sparkles{
+  position:absolute;top:0;left:0;right:0;bottom:0;
+  pointer-events:none;overflow:hidden;
+}
+.neko-sparkles .star{
+  position:absolute;font-size:8px;
+  animation:neko-sparkle 1.5s ease-in-out infinite;
+}
+
+/* 代码块头部猫猫脚印装饰 */
+.code-header::before{
+  content:'🐱 ';font-size:10px;opacity:0.6;
+}
+
+/* 思考面板 — 猫猫歪头装饰 */
+.thought::before{content:'🤔💭 '}
+
+/* 日记面板 — 猫猫写字装饰 */
+.diary::before{content:'📝✨ '}
+
+/* 渐变分隔线 — 替代单调的灰色 HR */
+.b hr{
+  border:none;height:2px;margin:.8em 0;
+  background:linear-gradient(90deg,transparent,var(--user-bubble-solid,#e8618c),#9c7cb5,var(--user-bubble-solid,#e8618c),transparent);
+  border-radius:1px;opacity:0.4;
+}
+
+/* 引用块 — 左边框渐变 + 柔粉背景 */
+.b blockquote{
+  border-left:3px solid transparent;
+  border-image:linear-gradient(180deg,var(--user-bubble-solid,#e8618c),#9c7cb5) 1;
+  background:rgba(232,97,140,0.04);
+  padding:8px 14px;margin:.5em 0;
+  border-radius:0 8px 8px 0;
+  font-style:italic;
+}
+
+/* 行内代码 — 猫娘粉色调 */
+.b code{
+  background:var(--code-bg);
+  border:1px solid rgba(232,97,140,0.12);
+  border-radius:5px;
+  padding:1px 5px;
+}
+
+/* 工具名称彩虹渐变改为猫娘色系 */
+.tool-use .tool-name{
+  background:linear-gradient(90deg,#e8618c,#9c7cb5,#5bbfad,#e8618c);
+  background-size:300% 100%;
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  font-weight:700;
+}
+
+/* ── 猫娘动画关键帧喵～ ────────────────────────── */
+/* 气泡入场：从小弹到大，像猫猫优雅地跳出来一样 */
+@keyframes neko-pop-in{
+  0%{opacity:0;transform:scale(0.7) translateY(10px)}
+  60%{transform:scale(1.02) translateY(-1px)}
+  100%{opacity:1;transform:scale(1) translateY(0)}
+}
+/* 用户气泡从右边滑入 — 缓出，不急不躁 */
+@keyframes neko-slide-right{
+  0%{opacity:0;transform:translateX(24px) scale(0.92)}
+  70%{transform:translateX(-2px) scale(1.005)}
+  100%{opacity:1;transform:translateX(0) scale(1)}
+}
+/* 助理气泡从左边滑入 */
+@keyframes neko-slide-left{
+  0%{opacity:0;transform:translateX(-24px) scale(0.92)}
+  70%{transform:translateX(2px) scale(1.005)}
+  100%{opacity:1;transform:translateX(0) scale(1)}
+}
+/* 系统消息淡入 */
+@keyframes neko-fade-up{
+  0%{opacity:0;transform:translateY(6px)}
+  100%{opacity:1;transform:translateY(0)}
+}
+/* 流式打字时气泡的呼吸脉动 */
+@keyframes neko-breathe{
+  0%,100%{box-shadow:0 1px 8px rgba(156,124,181,0.08)}
+  50%{box-shadow:0 2px 16px rgba(232,97,140,0.15)}
+}
+/* 猫爪打字指示器 */
+@keyframes neko-paw-bounce{
+  0%,80%,100%{transform:translateY(0)}
+  40%{transform:translateY(-5px)}
+}
 
 /* ── 聊天容器 ───────────────────────────────────── */
 #c{
   height:100%;overflow-y:auto;overflow-x:hidden;
   -webkit-overflow-scrolling:touch;
   padding:8px 14px 16px;
-  will-change:scroll-position;
 }
 #c::-webkit-scrollbar{width:3px}
 #c::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:2px}
 
 /* ── 消息 ───────────────────────────────────────── */
-.m{display:flex;align-items:flex-end;margin-bottom:4px;max-width:100%;
-  content-visibility:auto;contain-intrinsic-size:auto 60px}
-.m.user{flex-direction:row-reverse}
-.m.assistant,.m.system{flex-direction:row}
+.m{display:flex;align-items:flex-end;margin-bottom:4px;max-width:100%}
+/* 动画时长 0.5s，用 cubic-bezier 做柔和的缓出，不急不卡喵 */
+.m.user{flex-direction:row-reverse;animation:neko-slide-right 0.5s cubic-bezier(0.23,1,0.32,1) both}
+.m.assistant{flex-direction:row;animation:neko-slide-left 0.5s cubic-bezier(0.23,1,0.32,1) both}
+.m.system{flex-direction:row;animation:neko-fade-up 0.45s cubic-bezier(0.23,1,0.32,1) both}
 
-/* ── 气泡 ───────────────────────────────────────── */
+/* ── 头像喵～ ──────────────────────────────────── */
+.avatar-wrap{
+  position:relative;flex-shrink:0;
+  width:40px;height:44px; /* 额外高度留给猫耳 */
+}
+.m.user .avatar-wrap{margin-left:6px}
+.m.assistant .avatar-wrap{margin-right:6px}
+.avatar{
+  position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+  width:34px;height:34px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;cursor:pointer;
+  transition:transform 0.2s ease;
+  user-select:none;-webkit-user-select:none;
+  background-size:cover;background-position:center;
+}
+.avatar:active{transform:scale(0.9)}
+.m.user .avatar{
+  background:var(--user-bubble-solid,#e8618c);color:#fff;
+}
+.m.assistant .avatar{
+  background:var(--ast-bubble);color:var(--text);
+  border:2px solid var(--user-bubble-solid,#e8618c);
+}
+.avatar[style*="background-image"]{color:transparent}
+/* 猫耳叠在头像上方 */
+.avatar-wrap .neko-ears{
+  position:absolute;top:0;left:50%;transform:translateX(-50%);
+  margin:0;width:28px;height:16px;
+}
+
+/* ── 头像弹出菜单喵～ ────────────────────────── */
+.avatar-menu{
+  position:absolute;z-index:100;
+  background:var(--surface);
+  border:1px solid var(--sep);
+  border-radius:14px;
+  box-shadow:0 4px 20px rgba(0,0,0,0.12);
+  padding:6px 0;min-width:140px;
+  animation:neko-pop-in 0.35s cubic-bezier(0.23,1,0.32,1) both;
+}
+.avatar-menu.hidden{display:none}
+.avatar-menu-item{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 16px;font-size:13px;color:var(--text);
+  cursor:pointer;transition:background 0.15s;
+}
+.avatar-menu-item:active{background:rgba(232,97,140,0.08)}
+.avatar-menu-item .icon{font-size:16px;width:20px;text-align:center}
+
+/* ── 猫娘气泡喵～ ──────────────────────────────── */
 .b{
-  max-width:80%;padding:10px 16px;
-  font-size:15px;line-height:1.6;
+  max-width:78%;padding:12px 18px;
+  font-size:15px;line-height:1.65;
   word-break:break-word;overflow-wrap:break-word;
 }
 .m.user .b{
   background:var(--user-bubble);color:var(--user-text);
-  border-radius:20px 20px 4px 20px;margin-left:36px;
+  border-radius:22px 22px 6px 22px;
+  box-shadow:0 2px 12px rgba(232,97,140,0.15);
 }
 .m.assistant .b{
   background:var(--ast-bubble);color:var(--ast-text);
-  border-radius:20px 20px 20px 4px;
-  max-width:100%;margin-right:0;
+  border-radius:22px 22px 22px 6px;
+  max-width:calc(100% - 44px);margin-right:0;
+  box-shadow:0 1px 8px rgba(156,124,181,0.08);
+  transition:box-shadow 0.3s ease;
+}
+/* 流式消息呼吸脉动 — 让用户知道猫娘还在打字喵 */
+.m.assistant.streaming .b{
+  animation:neko-breathe 1.8s ease-in-out infinite;
 }
 .m.system .b{
   background:var(--system-bg);color:var(--system-text);
-  border-radius:12px;margin:4px auto;max-width:90%;
-  text-align:center;font-size:13px;padding:6px 14px;
+  border-radius:16px;margin:4px auto;max-width:90%;
+  text-align:center;font-size:13px;padding:8px 16px;
 }
+
+/* ── 猫爪打字指示器喵 ────────────────────────────── */
+.neko-typing{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:10px 18px;
+}
+.neko-typing .paw{
+  display:inline-block;width:8px;height:8px;
+  border-radius:50%;background:var(--neko-pink,#e8618c);opacity:0.6;
+  animation:neko-paw-bounce 1.2s ease-in-out infinite;
+}
+.neko-typing .paw:nth-child(2){animation-delay:0.15s}
+.neko-typing .paw:nth-child(3){animation-delay:0.3s}
+
+/* ── 猫耳心情指示器喵～ ──────────────────────────── */
+/* 叠在 AI 头像上方，由 .avatar-wrap 定位 */
+.neko-ears{
+  transition:transform 0.4s ease;pointer-events:auto;
+}
+.neko-ears .ear{
+  position:absolute;bottom:0;width:12px;height:16px;
+  border-radius:50% 50% 0 0;transition:all 0.4s cubic-bezier(0.34,1.56,0.64,1);
+}
+.neko-ears .ear.left{left:1px;background:var(--user-bubble-solid,#e8618c);transform:rotate(-15deg)}
+.neko-ears .ear.right{right:1px;background:var(--user-bubble-solid,#e8618c);transform:rotate(15deg)}
+/* 开心：耳朵竖直 */
+.neko-ears.happy .ear.left{transform:rotate(-5deg);height:18px}
+.neko-ears.happy .ear.right{transform:rotate(5deg);height:18px}
+/* 思考：一只耳朵歪 */
+.neko-ears.thinking .ear.left{transform:rotate(-25deg)}
+.neko-ears.thinking .ear.right{transform:rotate(5deg);height:14px}
+/* 出错/难过：耳朵耷拉 */
+.neko-ears.sad .ear.left{transform:rotate(-40deg);height:12px}
+.neko-ears.sad .ear.right{transform:rotate(40deg);height:12px}
+/* 害羞/撒娇：耳朵抖动 + 脸红色 + 冒爱心 */
+.neko-ears.shy .ear.left{
+  background:linear-gradient(180deg,#ff6b9d,#ff8daf);
+  animation:neko-ear-wiggle 0.5s ease 4;
+}
+.neko-ears.shy .ear.right{
+  background:linear-gradient(180deg,#ff6b9d,#ff8daf);
+  animation:neko-ear-wiggle-r 0.5s ease 4;
+}
+.neko-ears.shy .heart{opacity:1;animation:neko-heartbeat 0.8s ease 3}
+/* 摸头彩蛋：耳朵抖动 + 心心 */
+@keyframes neko-ear-wiggle{
+  0%,100%{transform:rotate(-15deg)}
+  25%{transform:rotate(-5deg)}
+  75%{transform:rotate(-25deg)}
+}
+@keyframes neko-ear-wiggle-r{
+  0%,100%{transform:rotate(15deg)}
+  25%{transform:rotate(25deg)}
+  75%{transform:rotate(5deg)}
+}
+.neko-ears.petted .ear.left{animation:neko-ear-wiggle 0.3s ease 3}
+.neko-ears.petted .ear.right{animation:neko-ear-wiggle-r 0.3s ease 3}
+.neko-ears .heart{
+  position:absolute;top:-10px;right:-2px;font-size:14px;opacity:0;
+  transition:opacity 0.3s;pointer-events:none;
+}
+.neko-ears.petted .heart{opacity:1;animation:neko-fade-up 0.8s ease-out forwards}
+
+/* ── 樱花飘落粒子喵～ ────────────────────────────── */
+@keyframes sakura-fall{
+  0%{transform:translateY(-10px) rotate(0deg);opacity:0.8}
+  50%{opacity:0.6}
+  100%{transform:translateY(100vh) rotate(360deg);opacity:0}
+}
+@keyframes sakura-sway{
+  0%,100%{margin-left:0}
+  50%{margin-left:30px}
+}
+.sakura-petal{
+  position:fixed;top:-10px;pointer-events:none;z-index:0;
+  width:10px;height:10px;border-radius:50% 0 50% 0;
+  background:rgba(232,97,140,0.3);
+  animation:sakura-fall linear forwards,sakura-sway 3s ease-in-out infinite;
+}
+@media(prefers-color-scheme:dark){
+  .sakura-petal{background:rgba(255,141,175,0.15)}
+}
+
+/* ── 猫爪足迹喵～ ────────────────────────────────── */
+@keyframes paw-fade{
+  0%{opacity:0.5;transform:scale(1)}
+  100%{opacity:0;transform:scale(1.5)}
+}
+.neko-pawprint{
+  position:fixed;pointer-events:none;z-index:9998;
+  font-size:20px;opacity:0.5;
+  animation:paw-fade 0.8s ease-out forwards;
+}
+
+/* ── 打字尾巴喵～ ────────────────────────────────── */
+/* 由 Android 侧在输入状态时注入到 DOM */
+@keyframes neko-tail-wag{
+  0%,100%{transform:rotate(-15deg)}
+  50%{transform:rotate(15deg)}
+}
+.neko-tail{
+  display:inline-block;font-size:18px;transform-origin:bottom center;
+  animation:neko-tail-wag 0.6s ease-in-out infinite;
+  vertical-align:middle;margin-left:4px;
+}
+
 /* 连续同角色消息 */
 .m.user+.m.user{margin-bottom:2px}
 .m.user+.m.user .b{border-radius:20px 6px 4px 20px}
@@ -127,8 +445,18 @@ body{background:var(--bg);color:var(--text)}
   border-left:3px solid var(--text-secondary);
   margin:.5em 0;padding:2px 10px;opacity:.85;
 }
-.b a{color:var(--link);text-decoration:underline}
-.m.user .b a{color:rgba(255,255,255,.9)}
+/* 链接 — 猫娘粉色下划线 + 按压微光效果 */
+.b a{
+  color:var(--link);text-decoration:none;
+  border-bottom:1.5px solid currentColor;
+  padding-bottom:1px;
+  transition:all 0.2s ease;
+}
+.b a:active{
+  background:rgba(232,97,140,0.1);
+  border-radius:3px;padding:1px 3px;
+}
+.m.user .b a{color:rgba(255,255,255,.9);border-bottom-color:rgba(255,255,255,0.4)}
 .b code{
   font-family:"SF Mono",Menlo,Consolas,monospace;
   font-size:.87em;padding:1px 5px;
@@ -137,18 +465,27 @@ body{background:var(--bg);color:var(--text)}
 .m.user .b code{background:rgba(255,255,255,.18)}
 
 /* 代码块 + 语言标签 */
-.code-block{position:relative;margin:.6em 0;border-radius:10px;overflow:hidden}
+/* 代码块入场渐入 + 左边框猫娘色 */
+.code-block{
+  position:relative;margin:.6em 0;border-radius:12px;overflow:hidden;
+  animation:neko-fade-up 0.55s cubic-bezier(0.23,1,0.32,1) both;
+  border-left:3px solid var(--user-bubble-solid,#e8618c);
+}
 .code-header{
   display:flex;justify-content:space-between;align-items:center;
   padding:6px 12px;background:var(--pre-header);
   font-size:12px;color:var(--pre-text);opacity:.7;
 }
 .code-header .copy-btn{
-  background:none;border:1px solid rgba(255,255,255,.2);
-  color:var(--pre-text);border-radius:4px;padding:2px 8px;
+  background:none;border:1px solid rgba(255,141,175,.3);
+  color:var(--tool-accent);border-radius:8px;padding:3px 10px;
   font-size:11px;cursor:pointer;opacity:.7;
+  transition:all 0.2s ease;
 }
-.code-header .copy-btn:active{opacity:1}
+.code-header .copy-btn:active{
+  opacity:1;background:rgba(255,141,175,.15);
+  transform:scale(0.95);
+}
 .code-block pre{
   background:var(--pre-bg);color:var(--pre-text);
   padding:12px 14px;margin:0;overflow-x:auto;
@@ -162,27 +499,30 @@ body{background:var(--bg);color:var(--text)}
 .b th,.b td{border:1px solid var(--sep);padding:5px 8px;text-align:left}
 .b th{font-weight:600;background:var(--code-bg)}
 
-/* 图片 */
-.b img{max-width:100%;height:auto;border-radius:8px;margin:4px 0;display:block}
+/* 图片 — 圆角更大 + 悬浮投影 + 入场动画 */
+.b img{
+  max-width:100%;height:auto;border-radius:12px;margin:6px 0;display:block;
+  box-shadow:0 2px 12px rgba(0,0,0,0.08);
+  animation:neko-pop-in 0.6s cubic-bezier(0.23,1,0.32,1) both;
+  transition:transform 0.25s cubic-bezier(0.23,1,0.32,1);
+}
+.b img:active{transform:scale(0.97)}
 
 /* HR */
 .b hr{border:none;border-top:1px solid var(--sep);margin:.8em 0}
 
-/* ── 工具调用气泡 ──────────────────────────────── */
+/* ── 工具调用气泡 — 猫娘风入场动画 ────────────── */
 .tool-use{
   background:var(--tool-bg);color:var(--tool-text);
-  border-radius:10px;padding:10px 14px 10px 38px;
+  border-radius:12px;padding:10px 14px 10px 38px;
   margin:.5em 0;position:relative;
   font-family:Menlo,Consolas,monospace;font-size:13px;
-  border:1px solid rgba(79,195,247,.2);
+  border:1px solid rgba(255,141,175,.2);
+  animation:neko-pop-in 0.55s cubic-bezier(0.23,1,0.32,1) both;
 }
 .tool-use::before{
   content:"⚙️";position:absolute;top:10px;left:10px;
   font-size:16px;
-}
-/* 只在视口内才播放动画（省电） */
-@media(prefers-reduced-motion:no-preference){
-  .tool-use::before{animation:spin 4s linear infinite}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 .tool-use .tool-label{color:var(--tool-accent);font-weight:700;font-size:12px}
@@ -191,9 +531,6 @@ body{background:var(--bg);color:var(--text)}
   background-size:300% 100%;
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;
   font-weight:700;
-}
-@media(prefers-reduced-motion:no-preference){
-  .tool-name{animation:flow 4s linear infinite}
 }
 @keyframes flow{to{background-position:-300% 0}}
 .tool-use .tool-body{
@@ -340,6 +677,19 @@ body{background:var(--bg);color:var(--text)}
 .html-render{border-radius:10px;overflow:hidden;margin:4px -4px}
 .html-render *{max-width:100%}
 
+/* ── Mermaid 图表 ───────────────────────────────── */
+.mermaid-placeholder{padding:12px;color:var(--text-secondary);font-size:13px;text-align:center}
+.mermaid{overflow-x:auto;margin:.5em 0}
+.mermaid svg{max-width:100%}
+
+/* ── 继续按钮（现在只在 AI 头像菜单里显示，不再独立漂浮）── */
+.continue-btn{display:none}
+.m.streaming .continue-btn{display:none}
+
+/* ── morphdom 流式新元素渐入 ───────────────────── */
+.vcp-stream-element-fade-in{animation:vcpFadeIn .3s ease-out}
+@keyframes vcpFadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
 /* ── 可见性优化：暂停离屏消息动画 ─────────────── */
 .vcp-paused,.vcp-paused *{animation-play-state:paused!important;transition:none!important}
 
@@ -357,9 +707,16 @@ body{background:var(--bg);color:var(--text)}
   width:100%;border:none;background:#fff;
   min-height:200px;display:none;
 }
+.html-preview-placeholder{
+  padding:14px 12px;
+  color:var(--text-secondary);
+  font-size:13px;
+  background:var(--surface);
+}
 .html-preview.active iframe{display:block}
 .html-preview.active .code-block,
-.html-preview.active .html-render{display:none}
+.html-preview.active .html-render,
+.html-preview.active .html-preview-placeholder{display:none}
 
 /* ── 图片查看器覆盖层 ─────────────────────────── */
 #imgViewer{
@@ -396,6 +753,12 @@ body{background:var(--bg);color:var(--text)}
   font-size:20px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
 }
+/* 附件样式 */
+.message-attachments{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.message-attachment-image-thumbnail{max-width:150px;max-height:150px;border-radius:8px;object-fit:cover;border:2px solid rgba(255,255,255,.2)}
+.message-attachments audio{max-width:250px}
+.message-attachments video{border-radius:8px}
+.file-attachment-badge{display:inline-block;padding:4px 10px;border-radius:6px;background:rgba(255,255,255,.1);font-size:13px}
 </style>
 </head>
 <body>
@@ -415,11 +778,17 @@ body{background:var(--bg);color:var(--text)}
   </div>
 </div>
 
+<script src="vendor/purify.min.js"></script>
 <script>
 (function(){
 'use strict';
 var C=document.getElementById('c'),
     MM={},autoScroll=true,scrollT=null;
+var PERF_FLAGS={
+  enableAmbientEffects:false,
+  enableTouchTrails:false,
+  autoRunFullHtml:false
+};
 
 // ── 特殊标记正则 ────────────────────────────────
 var RE={
@@ -436,16 +805,36 @@ var RE={
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
-// 清理危险标签（防 XSS）
+// ── HTML 净化（DOMPurify，对齐 VCPChat）─────────
+// 允许所有 HTML 标签和 style；仅删除 script 和危险事件处理器。
+// onclick="input(...)" 会被 hook 转为安全的 data-send 属性。
+var _purifyConfig={
+  ADD_TAGS:['iframe','style','details','summary'],
+  ADD_ATTR:['data-send','sandbox','srcdoc','target','allow'],
+  ALLOW_DATA_ATTR:true,
+  FORBID_TAGS:['script'],
+  FORBID_ATTR:[]  // on* 由 hook 处理
+};
+if(typeof DOMPurify!=='undefined'){
+  // Hook：在删除属性前，把 onclick="input('...')" 提取到 data-send
+  DOMPurify.addHook('uponSanitizeAttribute',function(node,data){
+    if(data.attrName.startsWith('on')&&data.attrValue){
+      // 提取 input('...') 或 input("...") 的参数
+      var m=data.attrValue.match(/^(?:window\.)?input\(\s*(['"])([\s\S]*?)\1\s*\)$/);
+      if(m&&(node.nodeName==='BUTTON'||node.nodeName==='A')){
+        node.setAttribute('data-send',m[2]);
+      }
+      // 删除所有 on* 属性
+      data.keepAttr=false;
+    }
+  });
+}
 function sanitize(html){
-  // 在删除 onclick 之前，提取 onclick="input('...')" 的参数保存到 data-send
-  // 这样 processButtons 可以用 data-send 发送正确的内容
-  // 匹配 onclick="input('...')" 和 onclick='input("...")'
-  var preserved=html.replace(/(<(?:button|a)\b[^>]*?)onclick\s*=\s*["'](?:window\.)?input\(\s*'((?:[^'\\]|\\.)*)'\s*\)["']/gi,
-    function(_,before,msg){return before+'data-send="'+msg.replace(/"/g,'&quot;')+'"'});
-  preserved=preserved.replace(/(<(?:button|a)\b[^>]*?)onclick\s*=\s*["'](?:window\.)?input\(\s*"((?:[^"\\]|\\.)*)"\s*\)["']/gi,
-    function(_,before,msg){return before+'data-send="'+msg.replace(/"/g,'&quot;')+'"'});
-  return preserved.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'')
+  if(typeof DOMPurify!=='undefined'){
+    return DOMPurify.sanitize(html,_purifyConfig);
+  }
+  // Fallback：极简 regex（DOMPurify 加载失败时）
+  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,'')
     .replace(/on\w+\s*=\s*["'][^"']*["']/gi,'')
     .replace(/javascript\s*:/gi,'blocked:');
 }
@@ -457,6 +846,22 @@ function md(text){
   // 代码块 → 带语言标签；HTML 完整文档 → 可预览
   h=h.replace(/```(\w*)\n([\s\S]*?)```/g,function(_,lang,code){
     var trimmed=code.trim();
+    // Mermaid 图表 → 占位符（后续异步渲染）
+    if(lang==='mermaid'||lang==='flowchart'||lang==='graph'){
+      var encoded=encodeURIComponent(trimmed);
+      return '<div class="mermaid-placeholder" data-mermaid-code="'+encoded+'"></div>';
+    }
+    // Python 代码块 — 提供 Pyodide 运行按钮
+    if(lang==='python'||lang==='py'){
+      var pyId='py_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
+      var langClass=' class="language-python"';
+      return '<div class="code-block" id="'+pyId+'">'+
+        '<div class="code-header"><span>python</span>'+
+        '<span class="copy-btn" onclick="copyCode(this)">复制</span> '+
+        '<span class="copy-btn" onclick="runPython(\''+pyId+'\')">▶ 运行</span></div>'+
+        '<pre><code'+langClass+'>'+trimmed+'</code></pre>'+
+        '<pre class="py-output" style="display:none;background:var(--surface);color:var(--text);padding:8px 12px;margin:0;border-top:1px solid var(--sep);font-size:12px;max-height:300px;overflow:auto"></pre></div>';
+    }
     // 检测完整 HTML 文档 — 提供"运行"预览
     if((lang==='html'||lang==='')&&/<!DOCTYPE\s+html|<html[\s>]/i.test(trimmed)){
       var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
@@ -464,16 +869,19 @@ function md(text){
         '<div class="html-preview-bar"><span>HTML 文档</span>'+
         '<button onclick="toggleHtmlPreview(\''+id+'\')">▶️ 运行</button></div>'+
         '<div class="code-block"><pre><code>'+trimmed+'</code></pre></div>'+
-        '<iframe sandbox="allow-scripts allow-same-origin"></iframe></div>';
+        '<iframe sandbox="allow-scripts"></iframe></div>';
     }
+    // 代码块 — 带语言 class 供 highlight.js 识别
+    var langClass=lang?' class="language-'+lang+'"':'';
     var header=lang?'<div class="code-header"><span>'+lang+'</span><span class="copy-btn" onclick="copyCode(this)">复制</span></div>':'';
-    return '<div class="code-block">'+header+'<pre><code>'+trimmed+'</code></pre></div>';
+    return '<div class="code-block">'+header+'<pre><code'+langClass+'>'+trimmed+'</code></pre></div>';
   });
   h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>');
   h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
   h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
-  h=h.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
+  // Image regex MUST run before link regex, otherwise ![alt](url) matches as !<a>
   h=h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,'<img src="$2" alt="$1" loading="lazy"/>');
+  h=h.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
   h=h.replace(/^#{3} (.+)$/gm,'<h3>$1</h3>');
   h=h.replace(/^#{2} (.+)$/gm,'<h2>$1</h2>');
   h=h.replace(/^#{1} (.+)$/gm,'<h1>$1</h1>');
@@ -495,11 +903,11 @@ function processSpecial(content,role){
   if(!content)return '';
   var out=content;
 
-  // 工具调用
+  // 工具调用（不用 inline onclick，由事件委托处理 .vcp-toggle）
   out=out.replace(RE.tool,function(_,body){
     var nameM=body.match(/tool_name:\s*「始」(.*?)「末」/);
     var name=nameM?nameM[1]:'Unknown Tool';
-    return '<div class="tool-use" onclick="this.classList.toggle(\'expanded\')">'+
+    return '<div class="tool-use vcp-toggle">'+
       '<span class="tool-label">VCP-ToolUse</span> '+
       '<span class="tool-name">'+esc(name)+'</span>'+
       '<div class="tool-body">'+esc(body.trim())+'</div></div>';
@@ -518,7 +926,7 @@ function processSpecial(content,role){
           '<div class="tool-result-val">'+md(kv[2].trim())+'</div></div>';
       }
     });
-    return '<div class="tool-result" onclick="this.classList.toggle(\'expanded\')">'+
+    return '<div class="tool-result vcp-toggle">'+
       '<div class="tool-result-header">'+
         '<span class="tool-result-label">ToolResult</span>'+
         (nameM?'<span class="tool-result-name">'+esc(nameM[1].trim())+'</span>':'')+
@@ -531,13 +939,13 @@ function processSpecial(content,role){
   // VCP 思维链
   out=out.replace(RE.thought,function(_,theme,body){
     var label=theme||'思维链';
-    return '<div class="thought" onclick="this.classList.toggle(\'expanded\')">'+
+    return '<div class="thought vcp-toggle">'+
       '<div class="thought-header"><span class="icon">🧠</span><span class="label">'+esc(label)+'</span></div>'+
       '<div class="thought-body">'+md(body.trim())+'</div></div>';
   });
   // <think> / <thinking>
   out=out.replace(RE.think,function(_,body){
-    return '<div class="thought" onclick="this.classList.toggle(\'expanded\')">'+
+    return '<div class="thought vcp-toggle">'+
       '<div class="thought-header"><span class="icon">🧠</span><span class="label">思维链</span></div>'+
       '<div class="thought-body">'+md(body.trim())+'</div></div>';
   });
@@ -581,8 +989,13 @@ function processSpecial(content,role){
 
 function renderContent(content,role){
   if(!content)return '';
-  // 先处理特殊标记
+  // 先处理特殊标记（工具、思维链、日记等 → 带 onclick 的交互组件）
   var processed=processSpecial(content,role);
+
+  // ★ 优先检测是否已被特殊处理器转换（包含我们的组件 class）
+  // 这些组件自带 onclick 事件，不能进 sanitize 否则 onclick 会被 DOMPurify 删除
+  var hasVcpComponents=/<(?:div|span) class="(?:tool-|thought|diary|role-div|btn-click)/.test(processed);
+
   // 检测完整 HTML 文档 — 不 sanitize（后续用 iframe sandbox 隔离运行）
   if(/<!DOCTYPE\s+html|<html[\s>]/i.test(processed)){
     return '<div class="html-render" data-full-html="1">'+processed+'</div>';
@@ -591,16 +1004,171 @@ function renderContent(content,role){
   if(/<style[\s>]/i.test(processed)&&/<script[\s>]/i.test(processed)){
     return '<div class="html-render" data-full-html="1">'+processed+'</div>';
   }
+
+  // 包含 VCP 组件时：组件不用 inline onclick（靠事件委托），
+  // 不走 sanitize（否则 class 和结构可能被破坏）。
+  // 对组件之间的纯文本段做 md() 渲染。
+  if(hasVcpComponents){
+    // 标记所有组件位置
+    var vcpRe=/<div class="(?:tool-use|tool-result|thought|diary|role-div|btn-click)\b/g;
+    var parts=[],lastEnd=0,match;
+    // SECURITY: run sanitize() FIRST so VCP component innerHTML can't carry XSS payloads
+    var tmp=document.createElement('div');tmp.innerHTML=sanitize(processed);
+    var result='';
+    var vcpClasses=['tool-use','tool-result','thought','diary','role-div','btn-click'];
+    tmp.childNodes.forEach(function(node){
+      if(node.nodeType===1&&node.classList){
+        var isVcp=false;
+        for(var c=0;c<vcpClasses.length;c++){if(node.classList.contains(vcpClasses[c])){isVcp=true;break;}}
+        if(isVcp){
+          result+=node.outerHTML;
+        }else{
+          result+=sanitize(node.outerHTML);
+        }
+      }else if(node.nodeType===3){
+        var t=node.textContent.trim();
+        if(t)result+=md(t);
+      }
+    });
+    return result;
+  }
+
   // 普通 HTML 片段 — sanitize 防 XSS
   if(/<(?:div|style|svg|canvas|iframe|table|script|head|body)\b/i.test(processed)){
     return '<div class="html-render">'+sanitize(processed)+'</div>';
   }
-  // 检测是否已被特殊处理器转换（包含我们的组件class）
-  if(/<(?:div|span) class="(?:tool-|thought|diary|role-div|btn-click)/.test(processed)){
-    return processed;
-  }
   return md(processed);
 }
+
+// ── 后处理：KaTeX + highlight.js + Mermaid + CSS scoping ──
+function postProcessContent(container){
+  // 1. KaTeX 数学公式
+  if(window.renderMathInElement){
+    try{
+      renderMathInElement(container,{
+        delimiters:[
+          {left:'$$',right:'$$',display:true},
+          {left:'$',right:'$',display:false},
+          {left:'\\(',right:'\\)',display:false},
+          {left:'\\[',right:'\\]',display:true}
+        ],
+        throwOnError:false
+      });
+    }catch(e){}
+  }
+  // 2. 代码高亮
+  if(window.hljs){
+    container.querySelectorAll('pre code').forEach(function(block){
+      if(block&&block.parentElement&&!block.parentElement.dataset.vcpPrettified){
+        try{hljs.highlightElement(block)}catch(e){}
+      }
+    });
+  }
+  // 3. Mermaid 图表
+  renderMermaidInContainer(container);
+  // 4. CSS scoping（防止 AI HTML 样式污染聊天页面）
+  scopeHtmlRenderStyles(container);
+}
+
+// ── Mermaid 异步渲染 ──────────────────────────────
+var _mermaidReady=false;
+function renderMermaidInContainer(container){
+  var placeholders=container.querySelectorAll('.mermaid-placeholder');
+  if(!placeholders.length)return;
+  if(typeof mermaid==='undefined')return;
+  if(!_mermaidReady){mermaid.initialize({startOnLoad:false,theme:'default'});_mermaidReady=true}
+  placeholders.forEach(function(el){
+    var code=el.dataset.mermaidCode;
+    if(!code)return;
+    try{
+      var decoded=decodeURIComponent(code).replace(/[—–－]/g,'--');
+      el.textContent=decoded;
+      el.classList.remove('mermaid-placeholder');
+      el.classList.add('mermaid');
+    }catch(e){el.textContent='[Mermaid 解码错误]';return}
+  });
+  var elems=container.querySelectorAll('.mermaid');
+  if(elems.length){
+    elems.forEach(function(el){
+      try{mermaid.run({nodes:[el]})}catch(e){
+        var src=el.textContent;
+        el.innerHTML='<div style="color:var(--system-text);font-size:12px">Mermaid 渲染错误</div><pre style="font-size:11px;overflow-x:auto">'+esc(src)+'</pre>';
+      }
+    });
+  }
+}
+
+// ── CSS Scoping ───────────────────────────────────
+function scopeHtmlRenderStyles(container){
+  container.querySelectorAll('.html-render:not([data-full-html])').forEach(function(el){
+    var styles=el.querySelectorAll('style');
+    if(!styles.length)return;
+    var scopeId='vcp-s-'+Math.random().toString(36).substr(2,6);
+    el.id=scopeId;
+    styles.forEach(function(styleEl){
+      styleEl.textContent=scopeCss(styleEl.textContent,scopeId);
+    });
+  });
+}
+function scopeCss(css,scopeId){
+  css=css.replace(/\/\*[\s\S]*?\*\//g,'');
+  var rules=[],depth=0,cur='';
+  for(var i=0;i<css.length;i++){
+    var ch=css[i];cur+=ch;
+    if(ch==='{')depth++;
+    else if(ch==='}'){depth--;if(depth===0){rules.push(cur.trim());cur=''}}
+  }
+  return rules.map(function(rule){
+    var m=rule.match(/^([^{]+)\{([\s\S]+)\}$/);
+    if(!m)return rule;
+    var sels=m[1].split(',').map(function(s){
+      s=s.trim();
+      if(/^(@|from|to|\d+%|:root|html|body)/.test(s))return s;
+      if(/^::?[\w-]+$/.test(s))return '#'+scopeId+s;
+      return '#'+scopeId+' '+s;
+    }).join(', ');
+    return sels+' { '+m[2]+' }';
+  }).join('\n');
+}
+
+// ── Pyodide Python 运行 ─────────────────────────
+var _pyodideReady=null; // Promise
+window.runPython=function(blockId){
+  var block=document.getElementById(blockId);
+  if(!block)return;
+  var code=block.querySelector('code').textContent;
+  var output=block.querySelector('.py-output');
+  output.style.display='block';
+  output.textContent='⏳ 加载 Python 环境...';
+
+  if(!_pyodideReady){
+    _pyodideReady=new Promise(function(resolve){
+      var s=document.createElement('script');
+      s.src='vendor/pyodide.js';
+      s.onload=function(){
+        loadPyodide().then(function(py){
+          // 重定向 stdout
+          py.runPython('import sys, io; sys.stdout=io.StringIO()');
+          resolve(py);
+        });
+      };
+      s.onerror=function(){output.textContent='❌ Pyodide 加载失败';_pyodideReady=null};
+      document.head.appendChild(s);
+    });
+  }
+
+  _pyodideReady.then(function(py){
+    output.textContent='⏳ 执行中...';
+    try{
+      py.runPython('sys.stdout=io.StringIO()');
+      py.runPython(code);
+      var stdout=py.runPython('sys.stdout.getvalue()');
+      output.textContent=stdout||'(无输出)';
+    }catch(e){
+      output.textContent='❌ '+e.message;
+    }
+  });
+};
 
 // ── 复制代码 ────────────────────────────────────
 window.copyCode=function(btn){
@@ -611,6 +1179,13 @@ window.copyCode=function(btn){
     });
   }
 };
+
+// ── 事件委托：VCP 组件展开/折叠 ────────────────
+// 替代 inline onclick，这样即使通过 DOMPurify 也不会丢失交互
+C.addEventListener('click',function(e){
+  var el=e.target.closest('.vcp-toggle');
+  if(el){el.classList.toggle('expanded');e.stopPropagation()}
+},false);
 
 // ── 滚动管理 ────────────────────────────────────
 C.addEventListener('scroll',function(){
@@ -627,19 +1202,80 @@ function throttleScroll(){
   scrollT=setTimeout(function(){scrollT=null;toBottom(false)},80);
 }
 
+function buildMessageNode(message){
+  var id=message.id,role=message.role,content=message.content||'',status=message.status||'complete';
+  var d=document.createElement('div');
+  d.className='m '+role;d.dataset.id=id;d.dataset.role=role;
+  if(status==='streaming'||status==='draft')d.classList.add('streaming');
+
+  if(role!=='system'){
+    var wrap=document.createElement('div');
+    wrap.className='avatar-wrap';
+    var av=document.createElement('div');
+    av.className='avatar';
+    var avatarConf=role==='user'?_userAvatar:_aiAvatar;
+    if(avatarConf.img){
+      av.style.backgroundImage='url('+avatarConf.img+')';
+    }else{
+      av.textContent=avatarConf.text;
+    }
+    av.onclick=function(e){e.stopPropagation();showAvatarMenu(d,role,id,av)};
+    wrap.appendChild(av);
+    d.appendChild(wrap);
+  }
+
+  var b=document.createElement('div');b.className='b';
+  if(status==='draft'&&!content.trim())
+    b.innerHTML='<div class="neko-typing"><span class="paw"></span><span class="paw"></span><span class="paw"></span></div>';
+  else if(role==='system')b.textContent=content;
+  else{b.innerHTML=renderContent(content,role);postProcessContent(b)}
+  // 渲染附件（图片/音频/视频/文件）
+  var atts=message.attachments;
+  if(atts&&atts.length){
+    var ac=document.createElement('div');ac.className='message-attachments';
+    for(var j=0;j<atts.length;j++){
+      var att=atts[j],el;
+      if(att.type&&att.type.indexOf('image/')===0){
+        el=document.createElement('img');el.src=att.src;el.alt=att.name||'附件图片';
+        el.className='message-attachment-image-thumbnail';
+      }else if(att.type&&att.type.indexOf('audio/')===0){
+        el=document.createElement('audio');el.src=att.src;el.controls=true;
+      }else if(att.type&&att.type.indexOf('video/')===0){
+        el=document.createElement('video');el.src=att.src;el.controls=true;el.style.maxWidth='300px';
+      }else{
+        el=document.createElement('span');el.className='file-attachment-badge';
+        el.textContent='\uD83D\uDCC4 '+(att.name||'文件');
+      }
+      if(el)ac.appendChild(el);
+    }
+    b.appendChild(ac);
+  }
+  d.appendChild(b);
+  return d;
+}
+
 // ── 公开 API ────────────────────────────────────
+// 头像配置 — 可通过 vcpChat.setAvatars() 从 Android 侧设置自定义头像
+var _userAvatar={text:'我',img:''};
+var _aiAvatar={text:'猫',img:''};
+
 window.vcpChat={
-  addMessage:function(id,role,content,status){
+  /** 设置自定义头像。Android 侧调用：vcpChat.setAvatars(userImg, aiImg) */
+  setAvatars:function(userImg,aiImg){
+    if(userImg)_userAvatar.img=userImg;
+    if(aiImg)_aiAvatar.img=aiImg;
+    // 更新已有头像
+    C.querySelectorAll('.m.user .avatar').forEach(function(a){
+      if(userImg)a.style.backgroundImage='url('+userImg+')';
+    });
+    C.querySelectorAll('.m.assistant .avatar').forEach(function(a){
+      if(aiImg)a.style.backgroundImage='url('+aiImg+')';
+    });
+  },
+  addMessage:function(id,role,content,status,attachments){
     if(MM[id]){this.updateMessage(id,content,status);return}
-    var d=document.createElement('div');
-    d.className='m '+role;d.dataset.id=id;d.dataset.role=role;
-    if(status==='streaming'||status==='draft')d.classList.add('streaming');
-    var b=document.createElement('div');b.className='b';
-    if(status==='draft'&&!content.trim())
-      b.innerHTML='<div class="dots"><span></span><span></span><span></span></div>';
-    else if(role==='system')b.textContent=content;
-    else b.innerHTML=renderContent(content,role);
-    d.appendChild(b);C.appendChild(d);MM[id]=d;
+    var d=buildMessageNode({id:id,role:role,content:content,status:status,attachments:attachments});
+    C.appendChild(d);MM[id]=d;
     toBottom(status!=='streaming');
   },
   updateMessage:function(id,content,status){
@@ -647,9 +1283,53 @@ window.vcpChat={
     if(status==='streaming'||status==='draft')d.classList.add('streaming');
     else d.classList.remove('streaming');
     if(status==='draft'&&!content.trim())
-      b.innerHTML='<div class="dots"><span></span><span></span><span></span></div>';
+      b.innerHTML='<div class="neko-typing"><span class="paw"></span><span class="paw"></span><span class="paw"></span></div>';
     else if(d.dataset.role==='system')b.textContent=content;
-    else b.innerHTML=renderContent(content,d.dataset.role);
+    else{
+      var newHtml=renderContent(content,d.dataset.role);
+      // morphdom 增量更新（流式时避免闪烁）
+      if(status==='streaming'&&window.morphdom){
+        try{morphdom(b,'<div class="b">'+newHtml+'</div>',{childrenOnly:true,
+          onBeforeElUpdated:function(f,t){
+            if(f.isEqualNode(t))return false;
+            // 保留已高亮的代码块
+            if(f.tagName==='CODE'&&f.dataset.highlighted)return false;
+            // 保留动画 class
+            if(f.classList&&f.classList.contains('vcp-stream-element-fade-in'))t.classList.add('vcp-stream-element-fade-in');
+            // 保留按钮状态
+            if(f.tagName==='BUTTON'&&f.disabled){t.disabled=true;t.style.opacity=f.style.opacity;t.textContent=f.textContent;return false}
+            // 不更新播放中的媒体
+            if((f.tagName==='VIDEO'||f.tagName==='AUDIO')&&!f.paused)return false;
+            // 保留输入焦点
+            if(f===document.activeElement){requestAnimationFrame(function(){t.focus()});return true}
+            // 保留已加载的图片
+            if(f.tagName==='IMG'&&f.complete&&f.naturalWidth>0)return false;
+            return true;
+          },
+          onBeforeNodeDiscarded:function(n){return!n.classList||!n.classList.contains('keep-alive')},
+          onNodeAdded:function(n){
+            if(n.nodeType===1&&/^(P|DIV|UL|OL|LI|PRE|BLOCKQUOTE|H[1-6]|TABLE)$/.test(n.tagName)){
+              n.classList.add('vcp-stream-element-fade-in');
+              setTimeout(function(){if(n.classList)n.classList.remove('vcp-stream-element-fade-in')},1000);
+            }
+            return n;
+          }
+        })}catch(e){b.innerHTML=newHtml}
+      }else{
+        b.innerHTML=newHtml;
+      }
+      if(status==='streaming'){
+        // 流式时仅做轻量高亮（KaTeX/Mermaid 等留到 final）
+        if(window.hljs){b.querySelectorAll('pre code:not([data-highlighted])').forEach(function(block){
+          if(block&&block.parentElement&&!block.parentElement.dataset.vcpPrettified){
+            try{hljs.highlightElement(block)}catch(e){}
+          }
+        })}
+      }else{
+        postProcessContent(b);
+        // "继续生成"功能已移至 AI 头像点击菜单喵
+      }
+    }
     throttleScroll();
   },
   removeMessage:function(id){var d=MM[id];if(d){d.remove();delete MM[id]}},
@@ -657,12 +1337,8 @@ window.vcpChat={
   loadHistory:function(json){
     var msgs=JSON.parse(json),frag=document.createDocumentFragment();
     for(var i=0;i<msgs.length;i++){
-      var m=msgs[i],d=document.createElement('div');
-      d.className='m '+m.role;d.dataset.id=m.id;d.dataset.role=m.role;
-      var b=document.createElement('div');b.className='b';
-      if(m.role==='system')b.textContent=m.content;
-      else b.innerHTML=renderContent(m.content,m.role);
-      d.appendChild(b);frag.appendChild(d);MM[m.id]=d;
+      var m=msgs[i],d=buildMessageNode(m);
+      frag.appendChild(d);MM[m.id]=d;
     }
     C.appendChild(frag);autoScroll=true;C.scrollTop=C.scrollHeight;
   },
@@ -677,7 +1353,8 @@ window.toggleHtmlPreview=function(id){
   var isActive=container.classList.contains('active');
   var btn=container.querySelector('.html-preview-bar button');
   var iframe=container.querySelector('iframe');
-  var codeBlock=container.querySelector('.code-block')||container.querySelector('pre')||container.querySelector('.html-render');
+  var placeholder=container.querySelector('.html-preview-placeholder');
+  var codeBlock=container.querySelector('.code-block')||container.querySelector('pre')||container.querySelector('.html-render')||placeholder;
   if(isActive){
     container.classList.remove('active');
     iframe.srcdoc='';iframe.style.display='none';
@@ -699,7 +1376,7 @@ window.toggleHtmlPreview=function(id){
       };
     }
     container.classList.add('active');
-    btn.textContent='🔙 代码';
+    btn.textContent=placeholder?'🔙 关闭预览':'🔙 代码';
   }
 };
 
@@ -728,7 +1405,7 @@ function processButtons(container){
       // 优先 data-send 属性，其次按钮自身的纯文本内容（去掉多余空白）
       var sendText=(btn.getAttribute('data-send')||btn.textContent||'').replace(/\s+/g,' ').trim();
       // 防止发送过长内容（如 HTML 残留）
-      if(sendText.length>200)sendText=sendText.substring(0,200);
+      if(sendText.length>500)sendText=sendText.substring(0,500);
       if(!sendText)return;
       // 发送
       window.input(sendText);
@@ -757,26 +1434,35 @@ function processHtmlPreviews(container){
       raw=raw.replace(/<button([^>]*?)\s+(\w+)',\s*(-?\d+)\)">/gi,function(_,attrs,move,dir){
         return '<button'+attrs+' onclick="rotate(\''+move+'\', '+dir+')">';
       });
-      // 直接自动加载到 iframe（不需要用户点击"运行"）
       var id='hp_'+Date.now()+'_'+Math.random().toString(36).substr(2,4);
       var preview=document.createElement('div');
-      preview.className='html-preview active';
+      preview.className='html-preview'+(PERF_FLAGS.autoRunFullHtml?' active':'');
       preview.id=id;
       preview.dataset.src=raw;
+      preview.dataset.complete='1';
+      var bar=document.createElement('div');
+      bar.className='html-preview-bar';
+      bar.innerHTML='<span>交互式 HTML</span><button onclick="toggleHtmlPreview(\''+id+'\')">'+(PERF_FLAGS.autoRunFullHtml?'🔙 关闭预览':'▶️ 运行')+'</button>';
+      var placeholder=document.createElement('div');
+      placeholder.className='html-preview-placeholder';
+      placeholder.textContent='已禁用自动运行，点击“运行”再加载预览。';
       var iframe=document.createElement('iframe');
-      iframe.sandbox='allow-scripts allow-same-origin';
-      iframe.style.display='block';
-      iframe.srcdoc=raw;
-      iframe.onload=function(){
-        try{
-          var h=iframe.contentDocument.documentElement.scrollHeight;
-          iframe.style.height=Math.max(h,200)+'px';
-        }catch(e){iframe.style.height='400px'}
-      };
-      el.innerHTML='';
+      iframe.sandbox='allow-scripts';
+      iframe.style.display=PERF_FLAGS.autoRunFullHtml?'block':'none';
+      if(PERF_FLAGS.autoRunFullHtml){
+        iframe.srcdoc=raw;
+        iframe.onload=function(){
+          try{
+            var h=iframe.contentDocument.documentElement.scrollHeight;
+            iframe.style.height=Math.max(h,200)+'px';
+          }catch(e){iframe.style.height='400px'}
+        };
+      }
       el.parentNode.insertBefore(preview,el);
-      preview.appendChild(el);
+      preview.appendChild(bar);
+      preview.appendChild(placeholder);
       preview.appendChild(iframe);
+      el.remove();
       return;
     }
     // 其他情况：检测 textContent 里的 HTML（被转义展示的代码）
@@ -811,7 +1497,7 @@ function wrapAsPreview(wrapper,htmlSource){
   var label=isComplete?'HTML 文档':'HTML 文档 <span style="color:var(--orange);font-size:11px">（不完整）</span>';
   bar.innerHTML='<span>'+label+'</span><button onclick="toggleHtmlPreview(\''+id+'\')">'+(isComplete?'▶️ 运行':'⚠️ 尝试运行')+'</button>';
   var iframe=document.createElement('iframe');
-  iframe.sandbox='allow-scripts allow-same-origin';
+  iframe.sandbox='allow-scripts';
   iframe.style.display='none';
   wrapper.parentNode.insertBefore(preview,wrapper);
   preview.appendChild(bar);
@@ -821,8 +1507,8 @@ function wrapAsPreview(wrapper,htmlSource){
 
 // 每次消息渲染后处理按钮 + HTML 预览
 var _origAdd=window.vcpChat.addMessage;
-window.vcpChat.addMessage=function(id,role,content,status){
-  _origAdd.call(this,id,role,content,status);
+window.vcpChat.addMessage=function(id,role,content,status,attachments){
+  _origAdd.call(this,id,role,content,status,attachments);
   var el=MM[id];if(el){processButtons(el);processHtmlPreviews(el)}
 };
 var _origUpdate=window.vcpChat.updateMessage;
@@ -963,14 +1649,23 @@ function showCtxMenu(msgEl,touch){
     addItem('📄','复制原文','',function(){
       if(window.VcpChatBridge)window.VcpChatBridge.onAction('copyRaw',id);
     });
+    // 朗读（仅 assistant 消息）
+    if(role==='assistant'&&hasContent){
+      addItem('🔊','朗读','',function(){
+        var text=bubble.innerText.replace(/\n{3,}/g,'\n\n').trim();
+        if(window.VcpChatBridge)window.VcpChatBridge.onAction('tts',text);
+      });
+    }
     addSep();
   }
 
-  // AI 专属操作
-  if(role==='assistant'&&!isStreaming){
-    addItem('🔄','重新回复','',function(){
-      if(window.VcpChatBridge)window.VcpChatBridge.onAction('retry',id);
-    });
+  // 非流式消息：编辑和分支
+  if(!isStreaming){
+    if(role==='assistant'){
+      addItem('🔄','重新回复','',function(){
+        if(window.VcpChatBridge)window.VcpChatBridge.onAction('retry',id);
+      });
+    }
     addItem('✏️','编辑消息','',function(){
       editMessage(id);
     });
@@ -1062,6 +1757,292 @@ window.b64d=function(b64){
     for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
     return new TextDecoder('utf-8').decode(bytes);
   }catch(e){return atob(b64)}
+};
+
+// ── 头像点击弹出菜单喵～ ──────────────────────────────────
+
+var _activeMenu=null;
+// 点击其他地方关闭菜单
+document.addEventListener('touchstart',function(e){
+  if(_activeMenu&&!_activeMenu.contains(e.target)){
+    _activeMenu.remove();_activeMenu=null;
+  }
+},{passive:true});
+
+function showAvatarMenu(msgEl,role,msgId,avatarEl){
+  // 关闭已有菜单
+  if(_activeMenu){_activeMenu.remove();_activeMenu=null}
+
+  var menu=document.createElement('div');
+  menu.className='avatar-menu';
+
+  if(role==='user'){
+    // ── 用户头像菜单 ──
+    addMenuItem(menu,'📋','复制消息',function(){
+      var b=msgEl.querySelector('.b');
+      if(b&&window.VcpChatBridge)window.VcpChatBridge.onAction('copy',b.innerText);
+      closeMenu();
+    });
+    addMenuItem(menu,'✏️','编辑消息',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('getContent',msgId);
+      closeMenu();
+    });
+    addMenuItem(menu,'🗑️','删除消息',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',msgId);
+      closeMenu();
+    });
+    addMenuItem(menu,'🔄','重新生成',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('regenerate',msgId);
+      closeMenu();
+    });
+    addMenuItem(menu,'🖼️','换头像',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('changeAvatar','user');
+      closeMenu();
+    });
+  }else{
+    // ── AI 头像菜单 ──
+    addMenuItem(menu,'📋','复制回复',function(){
+      var b=msgEl.querySelector('.b');
+      if(b&&window.VcpChatBridge)window.VcpChatBridge.onAction('copy',b.innerText);
+      closeMenu();
+    });
+    addMenuItem(menu,'▶️','继续生成',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('send','请继续');
+      closeMenu();
+    });
+    addMenuItem(menu,'🔊','朗读',function(){
+      var b=msgEl.querySelector('.b');
+      if(b&&window.VcpChatBridge)window.VcpChatBridge.onAction('tts',b.innerText);
+      closeMenu();
+    });
+    addMenuItem(menu,'🔇','停止朗读',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('ttsStop','');
+      closeMenu();
+    });
+    addMenuItem(menu,'🗑️','删除消息',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',msgId);
+      closeMenu();
+    });
+    addMenuItem(menu,'🖼️','换头像',function(){
+      if(window.VcpChatBridge)window.VcpChatBridge.onAction('changeAvatar','ai');
+      closeMenu();
+    });
+  }
+
+  // 定位菜单（用 avatar-wrap 容器定位，因为 avatar 是绝对定位的）
+  msgEl.style.position='relative';
+  var wrapEl=avatarEl.parentElement;
+  if(role==='user'){
+    menu.style.right='0';menu.style.top=(wrapEl.offsetTop+wrapEl.offsetHeight+4)+'px';
+  }else{
+    menu.style.left='0';menu.style.top=(wrapEl.offsetTop+wrapEl.offsetHeight+4)+'px';
+  }
+  msgEl.appendChild(menu);
+  _activeMenu=menu;
+
+  function closeMenu(){
+    menu.remove();_activeMenu=null;
+  }
+}
+
+function addMenuItem(menu,icon,label,onClick){
+  var item=document.createElement('div');
+  item.className='avatar-menu-item';
+  item.innerHTML='<span class="icon">'+icon+'</span>'+label;
+  item.onclick=function(e){e.stopPropagation();onClick()};
+  menu.appendChild(item);
+}
+
+// ── 猫娘小妙妙功能集合喵～ ──────────────────────────────────
+
+// ★ 1. 猫耳心情指示器
+// 分析消息内容关键词，判断情绪，给助理消息加猫耳
+var MOOD_HAPPY=/[哈嘻😄😊🎉✅👍开心高兴好的没问题当然可以完成成功太棒喵~♪♡❤️💕😺🐱]/;
+var MOOD_THINK=/[思考让我想想嗯\.\.\.分析考虑可能也许大概或许🤔💭推测假设]/;
+var MOOD_SAD=/[抱歉对不起失败错误无法不能问题出错❌😥😢⚠️遗憾不好意思]/;
+// 害羞/撒娇关键词 — 涩涩的猫娘反应喵
+var MOOD_SHY=/[害羞脸红喜欢///嘿嘿❤️💕💗💓亲亲抱抱蹭蹭摸摸撒娇主人呜呜好喜欢心动]/;
+
+function detectMood(text){
+  if(!text)return'happy';
+  var t=text.substring(0,300);
+  if(MOOD_SHY.test(t))return'shy';
+  if(MOOD_SAD.test(t))return'sad';
+  if(MOOD_THINK.test(t))return'thinking';
+  return'happy';
+}
+
+function attachNekoEars(msgEl,content){
+  if(msgEl.dataset.role!=='assistant')return;
+  var wrap=msgEl.querySelector('.avatar-wrap');
+  if(!wrap)return;
+  var existing=wrap.querySelector('.neko-ears');
+  var mood=detectMood(content);
+  if(existing){
+    existing.className='neko-ears '+mood;
+    return;
+  }
+  var ears=document.createElement('div');
+  ears.className='neko-ears '+mood;
+  ears.innerHTML='<div class="ear left"></div><div class="ear right"></div><span class="heart">💕</span>';
+  // 长按摸头彩蛋
+  var petReactions=[
+    '呜...不要突然摸那里喵...',
+    '哈啊...主人的手好温暖♡',
+    '喵呜~再摸一下嘛...',
+    '耳朵...耳朵很敏感的喵////',
+    '嗯~主人最喜欢摸猫娘了对吧♡',
+    '呼噜噜...好舒服喵~',
+  ];
+  var timer=null;var petCount=0;
+  ears.addEventListener('touchstart',function(e){
+    timer=setTimeout(function(){
+      ears.classList.add('petted');
+      if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
+        window.VcpChatBridge.onAction('haptic','pet');
+      }
+      setTimeout(function(){ears.classList.remove('petted')},1800);
+    },400);
+  });
+  ears.addEventListener('touchend',function(){clearTimeout(timer)});
+  ears.addEventListener('touchcancel',function(){clearTimeout(timer)});
+  wrap.insertBefore(ears,wrap.firstChild);
+}
+
+// Hook into addMessage/updateMessage to attach ears
+var _earAdd=window.vcpChat.addMessage;
+window.vcpChat.addMessage=function(id,role,content,status,attachments){
+  _earAdd.call(this,id,role,content,status,attachments);
+  var el=MM[id];if(el)attachNekoEars(el,content);
+};
+var _earUpdate=window.vcpChat.updateMessage;
+window.vcpChat.updateMessage=function(id,content,status){
+  _earUpdate.call(this,id,content,status);
+  var el=MM[id];if(el)attachNekoEars(el,content);
+};
+
+// ★ 2. 樱花飘落粒子
+// 每隔几秒生成一片花瓣，最多同时 8 片，不影响性能
+var SAKURA_MAX=8;
+var sakuraCount=0;
+function spawnSakura(){
+  if(!PERF_FLAGS.enableAmbientEffects)return;
+  if(sakuraCount>=SAKURA_MAX)return;
+  sakuraCount++;
+  var petal=document.createElement('div');
+  petal.className='sakura-petal';
+  petal.style.left=Math.random()*100+'%';
+  var size=6+Math.random()*8;
+  petal.style.width=size+'px';
+  petal.style.height=size+'px';
+  var dur=6+Math.random()*6;
+  petal.style.animationDuration=dur+'s,'+( 2+Math.random()*3)+'s';
+  petal.style.animationDelay=Math.random()*2+'s';
+  document.body.appendChild(petal);
+  setTimeout(function(){
+    petal.remove();
+    sakuraCount--;
+  },dur*1000+2000);
+}
+// 每 3-6 秒飘一片
+if(PERF_FLAGS.enableAmbientEffects){
+  setInterval(function(){
+    if(document.hidden)return;
+    spawnSakura();
+  },3000+Math.random()*3000);
+  // 初始来两片
+  setTimeout(spawnSakura,500);
+  setTimeout(spawnSakura,1500);
+}
+
+// ★ 3. 猫爪足迹
+// 点击/触摸时留下一个猫爪印，慢慢消失
+if(PERF_FLAGS.enableTouchTrails){
+  document.addEventListener('touchstart',function(e){
+    if(e.touches.length!==1)return;
+    var t=e.touches[0];
+    var paw=document.createElement('div');
+    paw.className='neko-pawprint';
+    paw.textContent='🐾';
+    paw.style.left=(t.clientX-10)+'px';
+    paw.style.top=(t.clientY-10)+'px';
+    document.body.appendChild(paw);
+    setTimeout(function(){paw.remove()},800);
+  },{passive:true});
+}
+
+// ★ 4. 打字尾巴摇
+// 由 Android 侧通过 bridge 调用 vcpChat.setTyping(true/false)
+window.vcpChat.setTyping=function(isTyping){
+  var existing=document.getElementById('neko-tail-indicator');
+  if(isTyping&&!existing){
+    var tail=document.createElement('span');
+    tail.id='neko-tail-indicator';
+    tail.className='neko-tail';
+    tail.textContent='🐱';
+    // 追加到最后一条消息后面（视觉上在输入区域附近）
+    var last=C.lastElementChild;
+    if(last){
+      last.appendChild(tail);
+    }
+  }else if(!isTyping&&existing){
+    existing.remove();
+  }
+};
+
+// ★ 5. 消息到达震动 + 星星特效
+var _vibeAdd=window.vcpChat.addMessage;
+window.vcpChat.addMessage=function(id,role,content,status,attachments){
+  _vibeAdd.call(this,id,role,content,status,attachments);
+  if(role==='assistant'&&status!=='streaming'&&status!=='draft'){
+    // 震动反馈
+    if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
+      window.VcpChatBridge.onAction('haptic','message');
+    }
+    // 星星闪烁特效 — 在气泡周围短暂撒几颗星
+    var el=MM[id];
+    if(el){spawnSparkles(el)}
+  }
+};
+
+// ★ 6. 星星闪烁特效
+// 消息完成时在气泡周围撒 5 颗小星星，1.5 秒后自动消失
+function spawnSparkles(msgEl){
+  var bubble=msgEl.querySelector('.b');
+  if(!bubble)return;
+  var stars=['✨','⭐','💫','🌟','✧','⋆','☆'];
+  var container=document.createElement('div');
+  container.className='neko-sparkles';
+  bubble.style.position='relative';
+  bubble.appendChild(container);
+  for(var i=0;i<5;i++){
+    var star=document.createElement('span');
+    star.className='star';
+    star.textContent=stars[Math.floor(Math.random()*stars.length)];
+    star.style.left=Math.random()*90+'%';
+    star.style.top=Math.random()*90+'%';
+    star.style.animationDelay=(Math.random()*0.8)+'s';
+    star.style.fontSize=(6+Math.random()*8)+'px';
+    container.appendChild(star);
+  }
+  setTimeout(function(){container.remove()},2000);
+}
+
+// ★ 7. 消息完成时猫耳变开心 + 心跳动画
+var _moodUpdate=window.vcpChat.updateMessage;
+window.vcpChat.updateMessage=function(id,content,status){
+  _moodUpdate.call(this,id,content,status);
+  // 流式结束时给最后一条消息的猫耳加心跳
+  if(status==='complete'||status===''){
+    var el=MM[id];
+    if(el){
+      var ears=el.querySelector('.neko-ears');
+      if(ears){
+        ears.style.animation='neko-heartbeat 0.6s ease 2';
+        setTimeout(function(){ears.style.animation=''},1500);
+      }
+    }
+  }
 };
 
 if(window.VcpChatBridge&&window.VcpChatBridge.onReady)window.VcpChatBridge.onReady();

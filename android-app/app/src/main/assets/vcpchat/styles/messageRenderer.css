@@ -282,8 +282,48 @@
 }
 
 /* Also hide if copy button is direct child of the bubble (if no inner code element) */
-.vcp-tool-use-bubble>.code-copy {
+.vcp-tool-use-bubble>.code-copy,
+.vcp-tool-use-bubble>.code-copy-btn {
     display: none !important;
+}
+
+/* --- Code Block Copy Button --- */
+pre .code-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.2s, color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 3;
+    line-height: 1;
+}
+
+pre:hover .code-copy-btn {
+    opacity: 1;
+}
+
+pre .code-copy-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+pre .code-copy-btn:active {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+pre .code-copy-btn.copied {
+    color: #4caf50;
+    border-color: #4caf50;
+    opacity: 1;
 }
 
 .vcp-tool-request-bubble>strong {
@@ -410,7 +450,8 @@
 }
 
 /* Hide copy button as it's not a code block */
-.maid-diary-bubble>.code-copy {
+.maid-diary-bubble>.code-copy,
+.maid-diary-bubble>.code-copy-btn {
     display: none !important;
 }
 

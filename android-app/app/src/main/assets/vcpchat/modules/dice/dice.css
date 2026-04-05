@@ -1,5 +1,5 @@
 /* 导入主应用的 themes.css 以使用共享的颜色变量 */
-@import url('../styles/themes.css');
+@import url('../../styles/themes.css');
 
 html,
 body {

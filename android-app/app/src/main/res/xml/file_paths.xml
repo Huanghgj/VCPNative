@@ -3,4 +3,7 @@
     <files-path
         name="vcpnative_exports"
         path="vcpnative/exports/" />
+    <cache-path
+        name="camera_photos"
+        path="." />
 </paths>

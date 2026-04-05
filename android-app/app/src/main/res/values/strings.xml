@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">VCPNative</string>
+    <string name="ai_overlay_service_description">AI 悬浮助手：在任意应用上方显示悬浮窗，支持截屏识图和 AI 对话。</string>
 </resources>

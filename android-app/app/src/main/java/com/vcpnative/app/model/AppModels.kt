@@ -8,20 +8,40 @@ data class AppSettings(
     val enableVcpToolInjection: Boolean = false,
     val enableAgentBubbleTheme: Boolean = false,
     val enableThoughtChainInjection: Boolean = false,
-    val enableContextSanitizer: Boolean = true,
+    // Context sanitizer: converts HTML→Markdown in older assistant messages.
+    // Default OFF — VCPToolBox backend handles context management via contextTokenLimit.
+    // Only enable if using direct LLM API without VCPToolBox.
+    val enableContextSanitizer: Boolean = false,
     val contextSanitizerDepth: Int = 2,
-    val enableContextFolding: Boolean = true,
+    // Context folding: compresses old messages into summaries.
+    // Default OFF — VCPToolBox backend handles context truncation server-side.
+    // When VCPToolBox receives contextTokenLimit, it intelligently trims context.
+    // Client-side folding destroys information the backend could have preserved.
+    // Only enable as last resort for extremely long conversations on memory-constrained devices.
+    val enableContextFolding: Boolean = false,
     val contextFoldingKeepRecentMessages: Int = 12,
     val contextFoldingTriggerMessageCount: Int = 24,
     val contextFoldingTriggerCharCount: Int = 24_000,
-    val contextFoldingExcerptCharLimit: Int = 160,
+    val contextFoldingExcerptCharLimit: Int = 500,
     val contextFoldingMaxSummaryEntries: Int = 40,
     val topicSummaryModel: String = "gemini-2.5-flash",
+    val enableFloatingWindow: Boolean = false,
+    val overlayApiUrl: String = "",
+    val overlayApiKey: String = "",
+    val overlayModel: String = "",
     val lastAgentId: String? = null,
     val lastTopicId: String? = null,
 ) {
     val isConfigured: Boolean
         get() = vcpServerUrl.isNotBlank() && vcpApiKey.isNotBlank()
+
+    /** Overlay uses its own config if set, otherwise falls back to global VCP settings. */
+    val effectiveOverlayApiUrl: String
+        get() = overlayApiUrl.ifBlank { vcpServerUrl }
+    val effectiveOverlayApiKey: String
+        get() = overlayApiKey.ifBlank { vcpApiKey }
+    val effectiveOverlayModel: String
+        get() = overlayModel.ifBlank { "gemini-2.5-flash" }
 }
 
 data class VcpModelInfo(
@@ -63,13 +83,14 @@ data class CompiledChatRequest(
     val endpoint: String,
     val apiBaseUrl: String? = null,
     val apiKey: String,
-    val model: String = "gemini-pro",
+    val model: String = "gemini-2.5-flash",
     val temperature: Double = 0.7,
     val maxTokens: Int? = null,
     val contextTokenLimit: Int? = null,
     val topP: Double? = null,
     val topK: Int? = null,
     val stream: Boolean = true,
+    val thinking: Boolean? = null,
     val messages: List<CompiledMessage>,
 )
 

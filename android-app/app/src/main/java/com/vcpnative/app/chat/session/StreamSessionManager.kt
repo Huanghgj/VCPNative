@@ -5,6 +5,7 @@ import com.vcpnative.app.model.CompiledChatRequest
 import com.vcpnative.app.model.StreamInterruptResult
 import com.vcpnative.app.model.StreamSessionEvent
 import com.vcpnative.app.network.sse.SseEventParser
+import com.vcpnative.app.network.vcp.ActiveRequestTracker
 import com.vcpnative.app.network.vcp.VcpServiceConfig
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
@@ -35,6 +36,7 @@ interface StreamSessionManager {
 class VcpToolBoxStreamSessionManager(
     private val okHttpClient: OkHttpClient,
     private val boundedHttpClient: OkHttpClient = okHttpClient,
+    private val activeRequestTracker: ActiveRequestTracker = ActiveRequestTracker(),
 ) : StreamSessionManager {
     private val activeRequests = ConcurrentHashMap<String, ActiveStreamRequest>()
 

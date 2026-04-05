@@ -22,11 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.BugReport
-import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Casino
-import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.NoteAlt
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.Card
@@ -54,10 +56,10 @@ private val moduleTools = listOf(
     ToolItem("notes", "Notes", Icons.Outlined.Article),
     ToolItem("memo", "Memo", Icons.Outlined.NoteAlt),
     ToolItem("forum", "Forum", Icons.Outlined.Forum),
-    ToolItem("canvas", "Canvas", Icons.Outlined.Code),
     ToolItem("translator", "Translator", Icons.Outlined.Translate),
     ToolItem("dice", "Dice", Icons.Outlined.Casino),
-    ToolItem("themes", "Themes", Icons.Outlined.Brush),
+    ToolItem("ragobserver", "灵视", Icons.Outlined.Psychology),
+    // Hidden: canvas, themes, voicechat — Android IPC not yet implemented
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -68,6 +70,10 @@ fun ToolsRoute(
     onOpenModule: (moduleId: String) -> Unit,
     onOpenVcpLog: () -> Unit,
     onOpenDebugLog: () -> Unit,
+    onOpenModels: () -> Unit = {},
+    onOpenBridge: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
+    onOpenGroupChat: () -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier
@@ -108,6 +114,49 @@ fun ToolsRoute(
                         )
                     }
                 }
+            }
+        }
+
+        item { Spacer(Modifier.height(24.dp)) }
+
+        // Features section
+        item {
+            SectionHeader("Features")
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            ) {
+                ListRow(
+                    icon = Icons.Outlined.Search,
+                    title = "全文搜索",
+                    subtitle = "搜索所有聊天消息",
+                    onClick = onOpenSearch,
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                ListRow(
+                    icon = Icons.Outlined.Psychology,
+                    title = "模型管理",
+                    subtitle = "使用排行、收藏、服务器模型列表",
+                    onClick = onOpenModels,
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                ListRow(
+                    icon = Icons.Outlined.Hub,
+                    title = "LLM 桥接器",
+                    subtitle = "多服务商直连 (OpenAI/Claude/Gemini/DeepSeek...)",
+                    onClick = onOpenBridge,
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                ListRow(
+                    icon = Icons.Outlined.Group,
+                    title = "群聊",
+                    subtitle = "多 Agent 协作对话",
+                    onClick = onOpenGroupChat,
+                )
             }
         }
 

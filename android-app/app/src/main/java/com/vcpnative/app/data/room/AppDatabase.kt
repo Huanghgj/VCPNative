@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -62,6 +63,11 @@ data class TopicEntity(
     val createdAt: Long,
     val updatedAt: Long,
     @ColumnInfo(name = "extra_json") val extraJson: String? = null,
+)
+
+data class RecentChatRow(
+    @Embedded val agent: AgentEntity,
+    @Embedded(prefix = "topic_") val topic: TopicEntity,
 )
 
 @Entity(
@@ -172,11 +178,64 @@ interface TopicDao {
     @Query("SELECT * FROM topics WHERE agentId = :agentId ORDER BY updatedAt DESC")
     fun observeByAgent(agentId: String): Flow<List<TopicEntity>>
 
+    @Query(
+        """
+        SELECT
+            agents.id,
+            agents.name,
+            agents.systemPrompt,
+            agents.promptMode,
+            agents.originalSystemPrompt,
+            agents.advancedSystemPromptJson,
+            agents.presetSystemPrompt,
+            agents.presetPromptPath,
+            agents.selectedPreset,
+            agents.model,
+            agents.temperature,
+            agents.contextTokenLimit,
+            agents.maxOutputTokens,
+            agents.topP,
+            agents.topK,
+            agents.streamOutput,
+            agents.avatarPath,
+            agents.sortOrder,
+            agents.updatedAt,
+            agents.extra_json,
+            topics.id AS topic_id,
+            topics.agentId AS topic_agentId,
+            topics.sourceTopicId AS topic_sourceTopicId,
+            topics.title AS topic_title,
+            topics.createdAt AS topic_createdAt,
+            topics.updatedAt AS topic_updatedAt,
+            topics.extra_json AS topic_extra_json
+        FROM agents
+        INNER JOIN topics ON topics.id = (
+            SELECT latest_topics.id
+            FROM topics AS latest_topics
+            WHERE latest_topics.agentId = agents.id
+            ORDER BY latest_topics.updatedAt DESC
+            LIMIT 1
+        )
+        ORDER BY topics.updatedAt DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeLatestTopicPerAgent(limit: Int): Flow<List<RecentChatRow>>
+
     @Query("SELECT * FROM topics WHERE agentId = :agentId ORDER BY updatedAt DESC")
     suspend fun loadByAgent(agentId: String): List<TopicEntity>
 
     @Query("SELECT * FROM topics WHERE id = :topicId LIMIT 1")
     suspend fun findById(topicId: String): TopicEntity?
+
+    @Query(
+        """
+        SELECT * FROM topics
+        WHERE agentId = :agentId AND sourceTopicId = :sourceTopicId
+        LIMIT 1
+        """,
+    )
+    suspend fun findByAgentAndSourceTopicId(agentId: String, sourceTopicId: String): TopicEntity?
 
     @Query("SELECT COUNT(*) FROM topics WHERE agentId = :agentId")
     suspend fun countByAgent(agentId: String): Int
@@ -204,6 +263,13 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC")
     suspend fun loadByTopic(topicId: String): List<MessageEntity>
+
+    /** 分页加载：offset 起始行（跳过最旧的 N 条），limit 每页条数。按时间正序返回。 */
+    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC LIMIT :limit OFFSET :offset")
+    suspend fun loadPaged(topicId: String, limit: Int, offset: Int): List<MessageEntity>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE topicId = :topicId")
+    suspend fun countByTopic(topicId: String): Int
 
     @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt DESC LIMIT :limit")
     suspend fun loadRecent(topicId: String, limit: Int): List<MessageEntity>
@@ -233,8 +299,47 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE id = :messageId")
     suspend fun deleteById(messageId: String)
 
+    @Query("DELETE FROM messages WHERE id IN (:messageIds)")
+    suspend fun deleteByIds(messageIds: List<String>)
+
     @Query("DELETE FROM messages WHERE topicId = :topicId AND createdAt >= :createdAt")
     suspend fun deleteFrom(topicId: String, createdAt: Long)
+
+    @Query("DELETE FROM messages WHERE topicId = :topicId")
+    suspend fun deleteByTopic(topicId: String)
+
+    /**
+     * 全文搜索：在指定 agent 的所有 topic 消息中搜索内容。
+     * 使用 LIKE — 对小数据集足够快；大规模数据请考虑 FTS 虚拟表。
+     * 注意：LIKE 的 '%' 通配符由 Room 参数绑定注入，不存在 SQL 注入风险，
+     * 但用户输入的 '%' 和 '_' 会被当作 LIKE 通配符匹配（属于功能而非漏洞）。
+     */
+    @Query(
+        """
+        SELECT DISTINCT messages.topicId
+        FROM messages
+        INNER JOIN topics ON topics.id = messages.topicId
+        WHERE topics.agentId = :agentId
+          AND messages.content LIKE '%' || :query || '%'
+        """,
+    )
+    suspend fun searchTopicIds(agentId: String, query: String): List<String>
+
+    /**
+     * 全文搜索：跨所有 agent 搜索消息内容，返回匹配的消息。
+     * LIMIT 防止一次性加载过多结果导致 OOM。
+     */
+    @Query(
+        """
+        SELECT messages.*
+        FROM messages
+        INNER JOIN topics ON topics.id = messages.topicId
+        WHERE messages.content LIKE '%' || :query || '%'
+        ORDER BY messages.createdAt DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchMessages(query: String, limit: Int = 50): List<MessageEntity>
 }
 
 @Dao
@@ -269,12 +374,22 @@ interface MessageAttachmentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(attachment: MessageAttachmentEntity)
+
+    @Query("DELETE FROM message_attachments WHERE messageId = :messageId")
+    suspend fun deleteByMessageId(messageId: String)
+
+    /** All distinct hashes — used by AttachmentCleaner to find orphaned files. */
+    @Query("SELECT DISTINCT hash FROM message_attachments WHERE hash IS NOT NULL AND hash != ''")
+    suspend fun loadAllHashes(): List<String>
 }
 
 @Dao
 interface RegexRuleDao {
     @Query("SELECT * FROM regex_rules WHERE agentId = :agentId ORDER BY ruleOrder ASC")
     suspend fun loadByAgent(agentId: String): List<RegexRuleEntity>
+
+    @Query("DELETE FROM regex_rules WHERE agentId = :agentId")
+    suspend fun deleteByAgent(agentId: String)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(rule: RegexRuleEntity)

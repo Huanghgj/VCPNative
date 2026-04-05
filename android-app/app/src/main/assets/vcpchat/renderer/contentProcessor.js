@@ -825,6 +825,63 @@ function processRenderedContent(contentDiv, settings = {}) {
             }
         });
     }
+
+    // Add copy buttons to code blocks
+    addCopyButtonsToCodeBlocks(contentDiv);
+}
+
+/**
+ * 为 contentDiv 内的所有代码块添加右上角复制按钮。
+ * 跳过已被特殊处理的 VCP/Diary 气泡。
+ */
+function addCopyButtonsToCodeBlocks(contentDiv) {
+    contentDiv.querySelectorAll('pre code').forEach(block => {
+        const preElement = block.parentElement;
+        if (!preElement) return;
+        // Skip special bubbles and already-processed blocks
+        if (preElement.dataset.vcpPrettified || preElement.dataset.maidDiaryPrettified) return;
+        if (preElement.querySelector('.code-copy-btn')) return;
+
+        preElement.style.position = 'relative';
+
+        const btn = document.createElement('button');
+        btn.className = 'code-copy-btn';
+        btn.title = '复制代码';
+        btn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">'
+            + '<path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>'
+            + '</svg>';
+
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const text = block.innerText;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => showCopySuccess(btn)).catch(() => fallbackCopy(text, btn));
+            } else {
+                fallbackCopy(text, btn);
+            }
+        });
+
+        preElement.appendChild(btn);
+    });
+}
+
+function fallbackCopy(text, btn) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showCopySuccess(btn); } catch (_) {}
+    document.body.removeChild(ta);
+}
+
+function showCopySuccess(btn) {
+    const origHTML = btn.innerHTML;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">'
+        + '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>'
+        + '</svg>';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = origHTML; btn.classList.remove('copied'); }, 1500);
 }
 
 

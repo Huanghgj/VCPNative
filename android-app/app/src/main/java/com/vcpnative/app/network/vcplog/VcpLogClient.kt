@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,49 +64,74 @@ class VcpLogClient(
     private val _status = MutableStateFlow(VcpLogConnectionStatus.Disconnected)
     val status: StateFlow<VcpLogConnectionStatus> = _status.asStateFlow()
 
-    private val _messages = MutableSharedFlow<VcpLogMessage>(extraBufferCapacity = 128)
+    private val _messages = MutableSharedFlow<VcpLogMessage>(extraBufferCapacity = 1024)
     val messages: SharedFlow<VcpLogMessage> = _messages.asSharedFlow()
+    private val pendingMessages = Channel<VcpLogMessage>(capacity = Channel.UNLIMITED)
 
-    // 两条 WebSocket 连接
+    // 三条 WebSocket 连接
     private var logSocket: WebSocket? = null     // /VCPlog/
     private var infoSocket: WebSocket? = null    // /vcpinfo/
+    private var mobileSocket: WebSocket? = null  // /vcp-mobile/
 
     private var currentUrl: String? = null
     private var currentKey: String? = null
-    private var shouldReconnect = false
-    private var reconnectAttempt = 0
+    @Volatile private var shouldReconnect = false
+    @Volatile private var reconnectAttempt = 0
     private var reconnectJob: Job? = null
-    private var logConnected = false
-    private var infoConnected = false
+    private var heartbeatJob: Job? = null
+    @Volatile private var logConnected = false
+    @Volatile private var infoConnected = false
+    @Volatile private var mobileConnected = false
+    // Guards connect/disconnect/reconnect state transitions — WebSocket callbacks arrive on OkHttp threads
+    private val stateLock = Any()
+
+    init {
+        scope.launch {
+            for (message in pendingMessages) {
+                _messages.emit(message)
+            }
+        }
+    }
 
     fun connect(wsUrl: String, wsKey: String) {
         disconnect()
         if (wsUrl.isBlank() || wsKey.isBlank()) return
-        currentUrl = wsUrl
-        currentKey = wsKey
-        shouldReconnect = true
-        reconnectAttempt = 0
+        synchronized(stateLock) {
+            currentUrl = wsUrl
+            currentKey = wsKey
+            shouldReconnect = true
+            reconnectAttempt = 0
+        }
         doConnect(wsUrl, wsKey)
     }
 
     fun disconnect() {
-        shouldReconnect = false
-        reconnectJob?.cancel()
-        reconnectJob = null
-        logSocket?.close(1000, "Client disconnect")
-        infoSocket?.close(1000, "Client disconnect")
-        logSocket = null
-        infoSocket = null
-        logConnected = false
-        infoConnected = false
+        synchronized(stateLock) {
+            shouldReconnect = false
+            reconnectJob?.cancel()
+            reconnectJob = null
+            heartbeatJob?.cancel()
+            heartbeatJob = null
+            logSocket?.close(1000, "Client disconnect")
+            infoSocket?.close(1000, "Client disconnect")
+            mobileSocket?.close(1000, "Client disconnect")
+            logSocket = null
+            infoSocket = null
+            mobileSocket = null
+            logConnected = false
+            infoConnected = false
+            mobileConnected = false
+        }
         _status.value = VcpLogConnectionStatus.Disconnected
     }
 
     fun sendApprovalResponse(requestId: String, approved: Boolean) {
         val json = JSONObject().apply {
             put("type", "tool_approval_response")
-            put("requestId", requestId)
-            put("approved", approved)
+            put("data", JSONObject().apply {
+                put("requestId", requestId)
+                put("approved", approved)
+            })
         }
         logSocket?.send(json.toString())
     }
@@ -120,7 +146,7 @@ class VcpLogClient(
 
     private fun updateStatus() {
         _status.value = when {
-            logConnected || infoConnected -> VcpLogConnectionStatus.Connected
+            logConnected || infoConnected || mobileConnected -> VcpLogConnectionStatus.Connected
             else -> VcpLogConnectionStatus.Connecting
         }
     }
@@ -143,6 +169,14 @@ class VcpLogClient(
         infoSocket = wsClient.newWebSocket(
             Request.Builder().url(infoUrl).build(),
             createListener("VCPInfo", isLogChannel = false),
+        )
+
+        // ── 通道 3: Mobile（离线消息队列、心跳、移动端专属广播） ──
+        val mobileUrl = "$wsBase/vcp-mobile/VCP_Key=$wsKey"
+        Log.d(TAG, "Connecting VCP-Mobile: $mobileUrl")
+        mobileSocket = wsClient.newWebSocket(
+            Request.Builder().url(mobileUrl).build(),
+            createMobileListener(),
         )
     }
 
@@ -178,21 +212,72 @@ class VcpLogClient(
         }
     }
 
+    private fun createMobileListener() = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            Log.d(TAG, "VCP-Mobile WebSocket connected")
+            mobileConnected = true
+            reconnectAttempt = 0
+            updateStatus()
+            // Start heartbeat to keep mobile channel alive
+            heartbeatJob?.cancel()
+            heartbeatJob = scope.launch {
+                while (true) {
+                    delay(HEARTBEAT_INTERVAL_MS)
+                    runCatching {
+                        webSocket.send(JSONObject().put("type", "heartbeat").toString())
+                    }
+                }
+            }
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            Log.d(TAG, "VCP-Mobile message (${text.length} chars): ${text.take(300)}")
+            parseAndEmit(text, "VCP-Mobile")
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, null)
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            Log.d(TAG, "VCP-Mobile WebSocket closed: $code $reason")
+            mobileConnected = false
+            heartbeatJob?.cancel()
+            updateStatus()
+            if (!logConnected && !infoConnected && !mobileConnected) scheduleReconnect()
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            Log.w(TAG, "VCP-Mobile WebSocket failure: ${t.message}")
+            mobileConnected = false
+            heartbeatJob?.cancel()
+            updateStatus()
+            if (!logConnected && !infoConnected && !mobileConnected) scheduleReconnect()
+        }
+    }
+
     private fun scheduleReconnect() {
-        if (!shouldReconnect) return
-        val url = currentUrl ?: return
-        val key = currentKey ?: return
-        reconnectAttempt++
-        val delayMs = minOf(
-            RECONNECT_BASE_DELAY_MS * (1L shl minOf(reconnectAttempt - 1, 4)),
-            RECONNECT_MAX_DELAY_MS,
-        )
-        Log.d(TAG, "Reconnect #$reconnectAttempt in ${delayMs}ms")
-        _status.value = VcpLogConnectionStatus.Connecting
-        reconnectJob?.cancel()
-        reconnectJob = scope.launch {
-            delay(delayMs)
-            if (shouldReconnect) doConnect(url, key)
+        synchronized(stateLock) {
+            if (!shouldReconnect) return
+            val url = currentUrl ?: return
+            val key = currentKey ?: return
+            reconnectAttempt++
+            if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
+                Log.w(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached, giving up")
+                _status.value = VcpLogConnectionStatus.Error
+                return
+            }
+            val delayMs = minOf(
+                RECONNECT_BASE_DELAY_MS * (1L shl minOf(reconnectAttempt - 1, 4)),
+                RECONNECT_MAX_DELAY_MS,
+            )
+            Log.d(TAG, "Reconnect #$reconnectAttempt in ${delayMs}ms")
+            _status.value = VcpLogConnectionStatus.Connecting
+            reconnectJob?.cancel()
+            reconnectJob = scope.launch {
+                delay(delayMs)
+                if (shouldReconnect) doConnect(url, key)
+            }
         }
     }
 
@@ -203,8 +288,8 @@ class VcpLogClient(
             val json = JSONObject(raw)
             val type = json.optString("type", "unknown")
 
-            if (type == "connection_ack") {
-                Log.d(TAG, "$source connection acknowledged")
+            if (type in SILENT_CONTROL_MESSAGE_TYPES) {
+                Log.d(TAG, "$source control message ignored: $type")
                 return
             }
 
@@ -222,8 +307,14 @@ class VcpLogClient(
             if (message != null) {
                 // 保存原始 JSON，灵视中心需要完整结构
                 val withRaw = message.copy(rawJson = raw)
-                val emitted = _messages.tryEmit(withRaw)
-                Log.d(TAG, "$source emit ${withRaw.type}/${withRaw.title} (ok=$emitted, subs=${_messages.subscriptionCount.value})")
+                if (shouldSuppressNotification(json, withRaw)) {
+                    Log.d(TAG, "$source notification suppressed: ${withRaw.type}/${withRaw.title}")
+                    return
+                }
+                val enqueued = pendingMessages.trySend(withRaw)
+                if (enqueued.isFailure) {
+                    Log.e(TAG, "$source failed to enqueue ${withRaw.type}/${withRaw.title}: ${enqueued.exceptionOrNull()?.message}")
+                }
             }
         }.onFailure {
             Log.w(TAG, "$source parse failed: ${raw.take(200)}", it)
@@ -425,9 +516,51 @@ class VcpLogClient(
         return raw
     }
 
+    private fun shouldSuppressNotification(
+        json: JSONObject,
+        message: VcpLogMessage,
+    ): Boolean {
+        val mergedText = buildString {
+            append(message.title)
+            append('\n')
+            append(message.content)
+        }.lowercase()
+
+        if (
+            mergedText.contains("heartbeat") ||
+            mergedText.contains("ping") ||
+            mergedText.contains("pong")
+        ) {
+            return true
+        }
+
+        val data = json.optJSONObject("data")
+        val source = data?.optString("source", "").orEmpty()
+        if (
+            source == "DistPluginManager" &&
+            (
+                mergedText.contains("heartbeat") ||
+                mergedText.contains("checking server status")
+            )
+        ) {
+            return true
+        }
+
+        return false
+    }
+
     companion object {
         private const val TAG = "VcpLogClient"
         private const val RECONNECT_BASE_DELAY_MS = 3000L
         private const val RECONNECT_MAX_DELAY_MS = 60_000L
+        private const val MAX_RECONNECT_ATTEMPTS = 20
+        private const val HEARTBEAT_INTERVAL_MS = 25_000L
+        private val SILENT_CONTROL_MESSAGE_TYPES = setOf(
+            "connection_ack",
+            "heartbeat_ack",
+            "heartbeat",
+            "ping",
+            "pong",
+        )
     }
 }

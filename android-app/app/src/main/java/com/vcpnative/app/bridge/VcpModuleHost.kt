@@ -57,10 +57,16 @@ fun VcpModuleHost(
 
     DisposableEffect(modulePath) {
         onDispose {
+            ipcDispatcher.eventEmitter = null
             webViewRef[0]?.let { wv ->
                 wv.stopLoading()
+                // Must clear clients before destroy to break reference cycles → prevents memory leak
+                wv.webChromeClient = null
+                wv.webViewClient = WebViewClient()
                 wv.removeJavascriptInterface(BRIDGE_NAME)
                 wv.loadUrl("about:blank")
+                // Must remove from parent before destroy, otherwise the parent holds a dangling ref
+                (wv.parent as? ViewGroup)?.removeView(wv)
                 wv.destroy()
                 webViewRef[0] = null
             }
@@ -78,7 +84,13 @@ fun VcpModuleHost(
                 modulePath = modulePath,
                 ipcDispatcher = ipcDispatcher,
                 onCloseRequest = onCloseRequest,
-            ).also { webViewRef[0] = it }
+            ).also { wv ->
+                webViewRef[0] = wv
+                // Wire up event emitter so IPC handlers can push events to JS
+                ipcDispatcher.eventEmitter = { channel, data ->
+                    emitToWebView(wv, channel, data)
+                }
+            }
         },
     )
 }
@@ -108,7 +120,8 @@ private fun createModuleWebView(
         settings.domStorageEnabled = true
         settings.allowFileAccess = true
         settings.allowContentAccess = true
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        // NEVER use ALWAYS_ALLOW — allows HTTP resources on HTTPS pages, enabling MITM
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.setSupportZoom(false)
@@ -116,9 +129,10 @@ private fun createModuleWebView(
         settings.mediaPlaybackRequiresUserGesture = false
         settings.textZoom = 100
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-        // Allow ES module imports (file:// doesn't support them, but just in case)
+        // allowFileAccessFromFileURLs: needed for ES module imports within assets
         settings.allowFileAccessFromFileURLs = true
-        settings.allowUniversalAccessFromFileURLs = true
+        // SECURITY: universalAccess lets file:// pages read ANY local file (creds, DB, etc.)
+        settings.allowUniversalAccessFromFileURLs = false
 
         // Bridge interface
         val bridge = BridgeInterface(
@@ -130,8 +144,50 @@ private fun createModuleWebView(
         )
         addJavascriptInterface(bridge, BRIDGE_NAME)
 
-        // Forward JS console.log/warn/error to BridgeLogger
+        // Forward JS console/alert to Android
         webChromeClient = object : WebChromeClient() {
+            // 支持 JS alert/confirm — 默认 WebView 不处理会导致 JS 卡死
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult?,
+            ): Boolean {
+                BridgeLogger.w("js:$modulePath", "alert: $message")
+                try {
+                    android.app.AlertDialog.Builder(context)
+                        .setMessage(message)
+                        .setPositiveButton("确定") { _, _ -> result?.confirm() }
+                        .setOnCancelListener { result?.cancel() }
+                        .show()
+                } catch (e: Exception) {
+                    // Context 不适合弹 Dialog（如 ApplicationContext），用 Toast + 直接 confirm
+                    android.widget.Toast.makeText(context, message ?: "", android.widget.Toast.LENGTH_LONG).show()
+                    result?.confirm()
+                }
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult?,
+            ): Boolean {
+                try {
+                    android.app.AlertDialog.Builder(context)
+                        .setMessage(message)
+                        .setPositiveButton("确定") { _, _ -> result?.confirm() }
+                        .setNegativeButton("取消") { _, _ -> result?.cancel() }
+                        .setOnCancelListener { result?.cancel() }
+                        .show()
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, message ?: "", android.widget.Toast.LENGTH_LONG).show()
+                    result?.confirm()
+                }
+                return true
+            }
+
             override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
                 val source = msg.sourceId()?.substringAfterLast('/') ?: "?"
                 val text = "[${source}:${msg.lineNumber()}] ${msg.message()}"
@@ -328,16 +384,18 @@ private class BridgeInterface(
                         val resultPreview = result?.toString()?.take(200) ?: "null"
                         BridgeLogger.d(modulePath, "IPC OK: $channel (${elapsed}ms) → $resultPreview")
                         val resultJson = result?.toString() ?: "null"
+                        // SECURITY: quote() prevents JS injection if id/result contain quotes or backslashes
+                        val safeId = JSONObject.quote(id)
                         scope.launch(Dispatchers.Main) {
-                            evaluateJs("window.__vcpBridge.resolve('$id',$resultJson);")
+                            evaluateJs("window.__vcpBridge.resolve($safeId,$resultJson);")
                         }
                     } catch (e: Exception) {
                         val elapsed = System.currentTimeMillis() - startMs
                         BridgeLogger.e(modulePath, "IPC FAIL: $channel (${elapsed}ms) ${e.message}")
-                        val errorMsg = e.message?.replace("'", "\\'")?.replace("\n", " ")
-                            ?: "Unknown error"
+                        val safeId = JSONObject.quote(id)
+                        val safeError = JSONObject.quote(e.message ?: "Unknown error")
                         scope.launch(Dispatchers.Main) {
-                            evaluateJs("window.__vcpBridge.reject('$id','$errorMsg');")
+                            evaluateJs("window.__vcpBridge.reject($safeId,$safeError);")
                         }
                     }
                 } else {
@@ -351,6 +409,18 @@ private class BridgeInterface(
                 }
             } catch (e: Exception) {
                 BridgeLogger.e(modulePath, "Bridge parse error: ${json.take(300)}")
+                // Try to extract id and reject so JS doesn't hang
+                runCatching {
+                    val msg = JSONObject(json)
+                    val id = msg.optString("id", "")
+                    if (id.isNotBlank()) {
+                        val safeId = JSONObject.quote(id)
+                        val safeError = JSONObject.quote("Bridge parse error: ${e.message}")
+                        scope.launch(Dispatchers.Main) {
+                            evaluateJs("window.__vcpBridge.reject($safeId,$safeError);")
+                        }
+                    }
+                }
             }
         }
     }
@@ -367,9 +437,10 @@ fun emitToWebView(webView: WebView, channel: String, data: Any?) {
         is Number, is Boolean -> data.toString()
         else -> JSONObject.quote(data.toString())
     }
+    val safeChannel = JSONObject.quote(channel)
     webView.post {
         webView.evaluateJavascript(
-            "if(window.__vcpBridge){window.__vcpBridge.emit('$channel',$dataJson);}",
+            "if(window.__vcpBridge){window.__vcpBridge.emit($safeChannel,$dataJson);}",
             null,
         )
     }

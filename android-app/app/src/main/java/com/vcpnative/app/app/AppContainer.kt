@@ -19,12 +19,24 @@ import com.vcpnative.app.data.prompt.PromptPresetCatalog
 import com.vcpnative.app.data.repository.RoomWorkspaceRepository
 import com.vcpnative.app.data.repository.WorkspaceRepository
 import com.vcpnative.app.data.room.AppDatabase
+import com.vcpnative.app.data.sync.CompatDesktopSyncManager
 import com.vcpnative.app.network.vcp.NetworkBackedVcpModelCatalog
 import com.vcpnative.app.network.vcp.VcpModelCatalog
 import com.vcpnative.app.network.vcp.boundedVcpHttpClient
 import com.vcpnative.app.network.vcp.defaultVcpHttpClient
+import com.vcpnative.app.data.ModelUsageTracker
+import com.vcpnative.app.network.llm.LlmAdapterRegistry
+import com.vcpnative.app.network.llm.LlmKeyManager
+import com.vcpnative.app.network.llm.LlmProfileStore
+import com.vcpnative.app.network.vcp.VcpToolBridge
+import com.vcpnative.app.data.groupchat.GroupChatEngine
+import com.vcpnative.app.data.groupchat.GroupChatRepository
 import com.vcpnative.app.network.vcplog.VcpLogClient
+import com.vcpnative.app.app.lifecycle.AppLifecycleManager
+import com.vcpnative.app.network.vcp.ActiveRequestTracker
+import com.vcpnative.app.bridge.EventBus
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 class AppContainer(
     context: Context,
@@ -55,6 +67,14 @@ class AppContainer(
             messageAttachmentDao = database.messageAttachmentDao(),
             regexRuleDao = database.regexRuleDao(),
             fileStore = fileStore,
+        )
+    }
+
+    val compatDesktopSyncManager: CompatDesktopSyncManager by lazy {
+        CompatDesktopSyncManager(
+            database = database,
+            fileStore = fileStore,
+            settingsRepository = settingsRepository,
         )
     }
 
@@ -103,8 +123,9 @@ class AppContainer(
 
     val streamSessionManager: StreamSessionManager by lazy {
         VcpToolBoxStreamSessionManager(
-            okHttpClient = okHttpClient,
+            okHttpClient = streamingHttpClient,
             boundedHttpClient = boundedHttpClient,
+            activeRequestTracker = activeRequestTracker,
         )
     }
 
@@ -116,12 +137,85 @@ class AppContainer(
         )
     }
 
+    val groupChatRepository: GroupChatRepository by lazy {
+        GroupChatRepository(fileStore = fileStore)
+    }
+
+    val groupChatEngine: GroupChatEngine by lazy {
+        GroupChatEngine(
+            repository = groupChatRepository,
+            workspaceRepository = workspaceRepository,
+            streamSessionManager = streamSessionManager,
+            settingsRepository = settingsRepository,
+        )
+    }
+
+    val vcpToolBridge: VcpToolBridge by lazy {
+        VcpToolBridge(vcpLogClient = vcpLogClient)
+    }
+
+    val llmProfileStore: LlmProfileStore by lazy {
+        LlmProfileStore(java.io.File(appContext.filesDir, "module_configs/llm_profiles.json"))
+    }
+
+    val llmAdapterRegistry: LlmAdapterRegistry by lazy {
+        LlmAdapterRegistry(boundedHttpClient)
+    }
+
+    val llmKeyManager: LlmKeyManager by lazy {
+        LlmKeyManager()
+    }
+
+    val modelUsageTracker: ModelUsageTracker by lazy {
+        ModelUsageTracker(fileStore = fileStore)
+    }
+
     val vcpLogClient: VcpLogClient by lazy {
         VcpLogClient(okHttpClient = okHttpClient)
     }
 
+    // ── Phase 2: Active request tracker (ported from VCPMobile ActiveRequests DashMap) ──
+
+    val activeRequestTracker: ActiveRequestTracker by lazy {
+        ActiveRequestTracker()
+    }
+
+    // ── Phase 2: Dual-channel event bus (ported from VCPMobile Tauri Event System) ──
+
+    val eventBus: EventBus by lazy {
+        EventBus()
+    }
+
+    // ── Phase 1: Lifecycle manager (ported from VCPMobile lifecycle_manager.rs) ──
+
+    val lifecycleManager: AppLifecycleManager by lazy {
+        AppLifecycleManager(
+            initDatabase = { database },
+            loadSettings = { settingsRepository.currentSettings() },
+            loadModels = {
+                try { modelCatalog.fetchAvailableModels() } catch (_: Exception) { /* non-fatal */ }
+            },
+            loadProfiles = { llmProfileStore.load() },
+            connectServices = {
+                // VcpLogClient connects reactively via settings Flow in VcpNativeApp
+            },
+        )
+    }
+
+    // ── HTTP clients ──
+
     val okHttpClient: OkHttpClient by lazy {
         defaultVcpHttpClient()
+    }
+
+    /** No read timeout — supports long-thinking models (o1, gemini-2.5-pro, etc.).
+     *  Ported from VCPMobile which uses no hard timeout for streaming. */
+    val streamingHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
     }
 
     private val boundedHttpClient: OkHttpClient by lazy {

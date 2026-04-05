@@ -36,6 +36,11 @@ class AndroidChatAttachmentManager(
     override suspend fun importAttachment(uri: Uri): ChatAttachment = withContext(Dispatchers.IO) {
         val resolver = appContext.contentResolver
         val metadata = loadMetadata(uri)
+        // 提前检查文件大小，避免复制超大文件后才发现不可用
+        if (metadata.size != null && metadata.size > MAX_IMPORT_BYTES) {
+            val sizeMb = metadata.size / 1024 / 1024
+            throw IOException("文件过大 (${sizeMb}MB)，上限 ${MAX_IMPORT_BYTES / 1024 / 1024}MB: ${metadata.name}")
+        }
         val originalName = metadata.name.ifBlank { "attachment.bin" }
         val mimeType = normalizeMimeType(
             originalName = originalName,
@@ -64,6 +69,13 @@ class AndroidChatAttachmentManager(
                     total
                 }
             } ?: throw IOException("Unable to open attachment input stream")
+
+            // 复制后再次检查实际大小（metadata.size 可能为 null）
+            if (copiedSize > MAX_IMPORT_BYTES) {
+                tempFile.delete()
+                val sizeMb = copiedSize / 1024 / 1024
+                throw IOException("文件过大 (${sizeMb}MB)，上限 ${MAX_IMPORT_BYTES / 1024 / 1024}MB: $originalName")
+            }
 
             val hash = digest.digest().toHexString()
             val targetFile = File(fileStore.attachmentsDir, "$hash$extension")
@@ -289,6 +301,8 @@ class AndroidChatAttachmentManager(
     )
 
     private companion object {
+        /** 导入附件的大小上限，与 ChatRequestCompiler.MAX_ATTACHMENT_BYTES 一致 */
+        const val MAX_IMPORT_BYTES = 20L * 1024 * 1024 // 20 MB
         const val JPEG_QUALITY = 82
         const val MAX_PDF_RENDER_PAGES = 12
         const val PDF_RENDER_SCALE = 2

@@ -6,8 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import com.vcpnative.app.data.ModelUsageTracker
 import com.vcpnative.app.data.datastore.SettingsRepository
+import com.vcpnative.app.data.groupchat.GroupChatRepository
 import com.vcpnative.app.data.repository.WorkspaceRepository
+import com.vcpnative.app.network.vcp.ActiveRequestTracker
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.flow.first
 import java.io.File
 import org.json.JSONArray
@@ -27,6 +31,11 @@ fun createIpcDispatcher(
     context: Context,
     settingsRepository: SettingsRepository,
     workspaceRepository: WorkspaceRepository,
+    modelUsageTracker: ModelUsageTracker? = null,
+    groupChatRepository: GroupChatRepository? = null,
+    eventBus: EventBus? = null,
+    activeRequestTracker: ActiveRequestTracker? = null,
+    streamingHttpClient: OkHttpClient? = null,
 ): IpcDispatcher {
     val dispatcher = IpcDispatcher()
 

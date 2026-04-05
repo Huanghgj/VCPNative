@@ -5,13 +5,13 @@ const ENHANCED_RENDER_DEBOUNCE_DELAY = 400; // ms, for general blocks during str
 const DIARY_RENDER_DEBOUNCE_DELAY = 1000; // ms, potentially longer for diary if complex
 const enhancedRenderDebounceTimers = new WeakMap(); // For debouncing prettify calls
 
-import { avatarColorCache, getDominantAvatarColor } from './renderer/colorUtils.js';
-import { initializeImageHandler, setContentAndProcessImages } from './renderer/imageHandler.js';
-import { processAnimationsInContent, cleanupAnimationsInContent } from './renderer/animation.js';
-import * as visibilityOptimizer from './renderer/visibilityOptimizer.js';
-import { createMessageSkeleton } from './renderer/domBuilder.js';
-import * as streamManager from './renderer/streamManager.js';
-import * as emoticonUrlFixer from './renderer/emoticonUrlFixer.js';
+import { avatarColorCache, getDominantAvatarColor } from '../../renderer/colorUtils.js';
+import { initializeImageHandler, setContentAndProcessImages } from '../../renderer/imageHandler.js';
+import { processAnimationsInContent, cleanupAnimationsInContent } from '../../renderer/animation.js';
+import * as visibilityOptimizer from '../../renderer/visibilityOptimizer.js';
+import { createMessageSkeleton } from '../../renderer/domBuilder.js';
+import * as streamManager from '../../renderer/streamManager.js';
+import * as emoticonUrlFixer from '../../renderer/emoticonUrlFixer.js';
 
 const colorExtractionPromises = new Map();
 
@@ -22,11 +22,11 @@ async function getDominantAvatarColorCached(url) {
     return colorExtractionPromises.get(url);
 }
 
-import * as contentProcessor from './renderer/contentProcessor.js';
-import * as contextMenu from './renderer/messageContextMenu.js';
+import * as contentProcessor from '../../renderer/contentProcessor.js';
+import * as contextMenu from '../../renderer/messageContextMenu.js';
 
 
-import * as middleClickHandler from './renderer/middleClickHandler.js';
+import * as middleClickHandler from '../../renderer/middleClickHandler.js';
 
 
 // --- Pre-compiled Regular Expressions for Performance ---
@@ -71,6 +71,153 @@ function injectEnhancedStyles() {
     } catch (error) {
         console.error('VCPSub Enhanced UI: Failed to load external styles:', error);
     }
+}
+
+// --- AI CSS Error Auto-Fix ---
+
+/**
+ * Fix common CSS syntax errors in AI-generated HTML.
+ *
+ * AI models frequently produce broken CSS/HTML that browsers silently discard.
+ * This function patches known mistakes before rendering.
+ */
+function fixAiCssErrors(text) {
+    if (!text || typeof text !== 'string') return text;
+
+    // ── Phase 1: Fix inline style="" attribute values ──
+    if (text.includes('style=')) {
+        text = text.replace(/style="([^"]*)"/gi, function(fullMatch, css) {
+            var fixed = fixCssValue(css);
+            if (fixed !== css) {
+                console.debug('[CSS-Fix] style attr:', css.substring(0, 60), '→', fixed.substring(0, 60));
+            }
+            return 'style="' + fixed + '"';
+        });
+        // Also handle single-quoted style='...'
+        text = text.replace(/style='([^']*)'/gi, function(fullMatch, css) {
+            return "style='" + fixCssValue(css) + "'";
+        });
+    }
+
+    // ── Phase 2: Fix <style> block contents ──
+    text = text.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, function(fullMatch, css) {
+        var fixed = fixCssValue(css);
+        return fullMatch.replace(css, fixed);
+    });
+
+    // ── Phase 3: Fix broken HTML structure ──
+    text = fixAiHtmlErrors(text);
+
+    return text;
+}
+
+/**
+ * Core CSS value fixer — handles both inline styles and <style> blocks.
+ */
+function fixCssValue(css) {
+    var fixed = css;
+
+    // 1. Hex color glued to number+unit: #1a15280% → #1a1528 0%
+    //    Handles 3, 6, and 8 digit hex
+    fixed = fixed.replace(/#([0-9a-fA-F]{8})(\d+(?:px|em|rem|vw|vh|vmin|vmax|%|pt|ch))/gi, '#$1 $2');
+    fixed = fixed.replace(/#([0-9a-fA-F]{6})(\d+(?:px|em|rem|vw|vh|vmin|vmax|%|pt|ch))/gi, '#$1 $2');
+    fixed = fixed.replace(/#([0-9a-fA-F]{3})(\d+(?:px|em|rem|vw|vh|vmin|vmax|%|pt|ch))/gi, '#$1 $2');
+
+    // 2. Missing comma after angle in gradient: linear-gradient(135deg#xxx → 135deg, #xxx
+    fixed = fixed.replace(/(\d+deg)(#)/gi, '$1, $2');
+    fixed = fixed.replace(/(\d+deg)(rgb)/gi, '$1, $2');
+
+    // 3. Missing comma between gradient color stops: #aaa 50%#bbb → #aaa 50%, #bbb
+    fixed = fixed.replace(/(\d+%)(#)/g, '$1, $2');
+    fixed = fixed.replace(/(\d+%)\s+(#)/g, '$1, $2');
+    // But NOT if already has comma: "50%, #" should stay
+    // The regex above won't match "50%, #" because the comma isn't part of \d+%
+
+    // 4. Bare numbers missing units (common for padding/margin/border-radius/font-size)
+    //    padding:10 → padding:10px  BUT NOT opacity:0.5 or flex:1 or rgb values
+    fixed = fixed.replace(/((?:padding|margin|border-radius|border-width|gap|top|right|bottom|left|width|height|max-width|max-height|min-width|min-height)\s*:\s*)(\d+\.?\d*)(?=\s*[;"}])/gi,
+        function(m, prop, num) {
+            // Don't add px to 0
+            return num === '0' ? m : prop + num + 'px';
+        }
+    );
+    // font-size bare number: font-size:14 → font-size:14px (but not font-size:0.93rem)
+    fixed = fixed.replace(/(font-size\s*:\s*)(\d{2,})(?=\s*[;"}])/gi, '$1$2px');
+
+    // 5. Double/triple semicolons: ;; → ;
+    fixed = fixed.replace(/;{2,}/g, ';');
+
+    // 6. Missing space after colon in properties: color:#fff → color: #fff (cosmetic but helps parsing)
+    // Actually browsers handle this fine, skip.
+
+    // 7. Unclosed rgb/rgba parentheses: rgb(255,0,0 → rgb(255,0,0)
+    fixed = fixed.replace(/rgba?\([^)]*?(?=[;"])/gi, function(m) {
+        if (!m.includes(')')) return m + ')';
+        return m;
+    });
+
+    // 8. CSS Color Level 4 space syntax → legacy comma syntax for WebView compat
+    //    rgb(255 0 0) → rgb(255, 0, 0)    rgba(255 0 0 / 0.5) → rgba(255, 0, 0, 0.5)
+    fixed = fixed.replace(/rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\)/g, 'rgb($1, $2, $3)');
+    fixed = fixed.replace(/rgba\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([0-9.]+)\s*\)/g, 'rgba($1, $2, $3, $4)');
+
+    // 9. color-mix() polyfill — older WebViews don't support it
+    //    color-mix(in srgb, #ff6b9d 30%, transparent) → rgba fallback
+    fixed = fixed.replace(/color-mix\(\s*in\s+srgb\s*,\s*([^,]+?)\s+(\d+)%\s*,\s*transparent\s*\)/gi,
+        function(m, color, pct) {
+            var alpha = (parseInt(pct) / 100).toFixed(2);
+            var hex = color.trim();
+            if (hex.match(/^#[0-9a-fA-F]{6}$/)) {
+                var r = parseInt(hex.substring(1, 3), 16);
+                var g = parseInt(hex.substring(3, 5), 16);
+                var b = parseInt(hex.substring(5, 7), 16);
+                return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+            }
+            return m; // Can't parse, leave as-is
+        }
+    );
+
+    // 10. -webkit-background-clip:text without -webkit-text-fill-color
+    //     (not a fix, just noting it usually works in Android WebView)
+
+    return fixed;
+}
+
+/**
+ * Fix common AI HTML structural errors.
+ */
+function fixAiHtmlErrors(text) {
+    // 1. Unclosed <div> — count opens vs closes, append missing closes
+    //    Only for simple cases where the mismatch is clear
+    var divOpens = (text.match(/<div[\s>]/gi) || []).length;
+    var divCloses = (text.match(/<\/div>/gi) || []).length;
+    if (divOpens > divCloses) {
+        var missing = divOpens - divCloses;
+        for (var i = 0; i < missing; i++) {
+            text += '</div>';
+        }
+    }
+
+    // 2. Unclosed <span>
+    var spanOpens = (text.match(/<span[\s>]/gi) || []).length;
+    var spanCloses = (text.match(/<\/span>/gi) || []).length;
+    if (spanOpens > spanCloses) {
+        var missingSpans = spanOpens - spanCloses;
+        for (var j = 0; j < missingSpans; j++) {
+            text += '</span>';
+        }
+    }
+
+    // 3. Stray </p> inside <div> (browsers handle this but it can cause layout issues)
+    //    Skip — too complex for regex, and browsers auto-correct this.
+
+    // 4. Broken img tags: <img src="..." (no closing >) — append >
+    text = text.replace(/<img\s+[^>]*?(?=[<])/gi, function(m) {
+        if (!m.endsWith('>')) return m + '>';
+        return m;
+    });
+
+    return text;
 }
 
 // --- Core Logic ---
@@ -755,6 +902,11 @@ function calculateDepthByTurns(messageId, history) {
  * @returns {string} The processed text.
  */
 function preprocessFullContent(text, settings = {}, messageRole = 'assistant', depth = 0) {
+    // ── AI CSS 容错修复 ──────────────────────────────────
+    // AI 生成的 inline CSS 经常有语法小错误，浏览器会直接丢弃整个属性。
+    // 这里做常见错误的自动修复，提升渲染鲁棒性。
+    text = fixAiCssErrors(text);
+
     //  新增：第一层修复 - Markdown 图片语法修复
     text = fixEmoticonUrlsInMarkdown(text);
 
@@ -937,10 +1089,15 @@ let mainRendererReferences = {
 function removeMessageById(messageId, saveHistory = false) {
     const item = mainRendererReferences.chatMessagesDiv.querySelector(`.message-item[data-message-id="${messageId}"]`);
     if (item) {
-        // --- NEW: Cleanup dynamic content before removing from DOM ---
+        // --- Cleanup dynamic content before removing from DOM ---
         const contentDiv = item.querySelector('.md-content');
         if (contentDiv) {
             cleanupAnimationsInContent(contentDiv);
+        }
+        // Cleanup scoped CSS for this specific message (ported from VCPMobile)
+        const scopeId = item.querySelector('[id^="vcp-bubble-"]')?.id;
+        if (scopeId) {
+            document.querySelectorAll(`style[data-vcp-scope-id="${scopeId}"]`).forEach(el => el.remove());
         }
         // 停止观察消息可见性
         visibilityOptimizer.unobserveMessage(item);
@@ -1427,6 +1584,27 @@ async function renderMessage(message, isInitialLoad = false, appendToDom = true)
         // Synchronously set the base HTML content
         const finalHtml = rawHtml;
         contentDiv.innerHTML = finalHtml;
+
+        // Auto-detect AI custom-styled HTML and make outer bubble transparent.
+        // When AI outputs a self-contained styled container (with inline background/gradient),
+        // the app's bubble background conflicts with it. We detect this and neutralize the bubble.
+        // Ported from VCPMobile's enableAgentBubbleTheme concept.
+        if (message.role === 'assistant') {
+            const firstChild = contentDiv.querySelector(':scope > div[style], :scope > p > div[style]');
+            if (firstChild) {
+                const style = firstChild.getAttribute('style') || '';
+                const hasCustomBg = /background\s*:/i.test(style) || /background-color\s*:/i.test(style);
+                if (hasCustomBg) {
+                    contentDiv.style.background = 'transparent';
+                    contentDiv.style.boxShadow = 'none';
+                    contentDiv.style.border = 'none';
+                    contentDiv.style.backdropFilter = 'none';
+                    contentDiv.style.webkitBackdropFilter = 'none';
+                    contentDiv.style.padding = '0';
+                    messageItem.classList.add('has-custom-bubble');
+                }
+            }
+        }
 
         // Define the post-processing logic as a function.
         // This allows us to control WHEN it gets executed.

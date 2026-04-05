@@ -5,7 +5,18 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,12 +28,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.CellTower
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.LayersClear
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -32,16 +57,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -67,6 +100,7 @@ import com.vcpnative.app.network.vcp.VcpServiceConfig
 import com.vcpnative.app.network.vcp.buildModelFetchFailureText
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -99,6 +133,16 @@ data class SettingsUiState(
     val modelStatus: String? = null,
     val exportStatus: String? = null,
     val lastExportZipPath: String? = null,
+    // 模块配置 (Forum/Memo 共享凭据)
+    val userName: String = "用户",
+    val forumUsername: String = "",
+    val forumPassword: String = "",
+    val forumReplyName: String = "",
+    val forumRememberCredentials: Boolean = true,
+    // 悬浮窗独立 API 配置 (留空则跟随全局)
+    val overlayApiUrl: String = "",
+    val overlayApiKey: String = "",
+    val overlayModel: String = "",
 ) {
     val canSave: Boolean
         get() = serverUrl.isNotBlank() && apiKey.isNotBlank() && !isSaving
@@ -108,7 +152,8 @@ class SettingsViewModel(
     private val settingsRepository: SettingsRepository,
     private val appDataExportManager: AppDataExportManager,
     private val modelCatalog: VcpModelCatalog,
-    fileStore: AppFileStore,
+    private val fileStore: AppFileStore,
+    private val appContext: Context,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(
         SettingsUiState(
@@ -117,6 +162,9 @@ class SettingsViewModel(
         ),
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    // 与 IpcHandlers.kt 中 configDir 路径保持一致：context.filesDir/module_configs/
+    private val forumConfigFile: File get() = File(appContext.filesDir, "module_configs/forum_config.json")
 
     init {
         viewModelScope.launch {
@@ -138,12 +186,41 @@ class SettingsViewModel(
                 contextFoldingExcerptCharLimit = settings.contextFoldingExcerptCharLimit.toString(),
                 contextFoldingMaxSummaryEntries = settings.contextFoldingMaxSummaryEntries.toString(),
                 topicSummaryModel = settings.topicSummaryModel,
+                overlayApiUrl = settings.overlayApiUrl,
+                overlayApiKey = settings.overlayApiKey,
+                overlayModel = settings.overlayModel,
             )
+            // 加载 Forum 凭据
+            loadForumConfig()
             if (settings.isConfigured) {
                 refreshModels(forceRefresh = false)
             }
         }
     }
+
+    private fun loadForumConfig() {
+        try {
+            if (forumConfigFile.exists()) {
+                val json = org.json.JSONObject(forumConfigFile.readText())
+                _uiState.value = _uiState.value.copy(
+                    forumUsername = json.optString("username", ""),
+                    forumPassword = json.optString("password", ""),
+                    forumReplyName = json.optString("replyUsername", ""),
+                    forumRememberCredentials = json.optBoolean("rememberCredentials", true),
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun updateForumUsername(v: String) { _uiState.value = _uiState.value.copy(forumUsername = v) }
+    fun updateForumPassword(v: String) { _uiState.value = _uiState.value.copy(forumPassword = v) }
+    fun updateForumReplyName(v: String) { _uiState.value = _uiState.value.copy(forumReplyName = v) }
+    fun updateForumRememberCredentials(v: Boolean) { _uiState.value = _uiState.value.copy(forumRememberCredentials = v) }
+    fun updateUserName(v: String) { _uiState.value = _uiState.value.copy(userName = v) }
+
+    fun updateOverlayApiUrl(value: String) { _uiState.value = _uiState.value.copy(overlayApiUrl = value) }
+    fun updateOverlayApiKey(value: String) { _uiState.value = _uiState.value.copy(overlayApiKey = value) }
+    fun updateOverlayModel(value: String) { _uiState.value = _uiState.value.copy(overlayModel = value) }
 
     fun updateServerUrl(value: String) {
         _uiState.value = _uiState.value.copy(serverUrl = value)
@@ -281,6 +358,11 @@ class SettingsViewModel(
                 vcpLogUrl = snapshot.vcpLogUrl,
                 vcpLogKey = snapshot.vcpLogKey,
             )
+            settingsRepository.saveOverlayApiConfig(
+                apiUrl = snapshot.overlayApiUrl,
+                apiKey = snapshot.overlayApiKey,
+                model = snapshot.overlayModel,
+            )
             settingsRepository.saveCompilerOptions(
                 enableVcpToolInjection = snapshot.enableVcpToolInjection,
                 enableAgentBubbleTheme = snapshot.enableAgentBubbleTheme,
@@ -305,6 +387,18 @@ class SettingsViewModel(
                 contextFoldingMaxSummaryEntries = maxSummaryEntries.toString(),
                 topicSummaryModel = summaryModel,
             )
+            // 保存 Forum/Memo 共享凭据
+            withContext(Dispatchers.IO) {
+                forumConfigFile.parentFile?.mkdirs()
+                val forumJson = org.json.JSONObject().apply {
+                    put("username", snapshot.forumUsername.trim())
+                    put("password", if (snapshot.forumRememberCredentials) snapshot.forumPassword else "")
+                    put("replyUsername", snapshot.forumReplyName.trim())
+                    put("rememberCredentials", snapshot.forumRememberCredentials)
+                }
+                forumConfigFile.writeText(forumJson.toString())
+            }
+
             refreshModels(forceRefresh = true)
             return true
         } catch (error: Throwable) {
@@ -332,13 +426,14 @@ class SettingsViewModel(
     }
 
     companion object {
-        fun factory(appContainer: AppContainer): ViewModelProvider.Factory = viewModelFactory {
+        fun factory(appContainer: AppContainer, context: Context): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 SettingsViewModel(
                     settingsRepository = appContainer.settingsRepository,
                     appDataExportManager = appContainer.appDataExportManager,
                     modelCatalog = appContainer.modelCatalog,
                     fileStore = appContainer.fileStore,
+                    appContext = context.applicationContext,
                 )
             }
         }
@@ -352,10 +447,10 @@ fun SettingsRoute(
     onNavigateBack: () -> Unit,
     onSaved: () -> Unit,
 ) {
-    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(appContainer))
+    val context = LocalContext.current
+    val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(appContainer, context))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     val exportZipSaver = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri ->
@@ -393,6 +488,13 @@ fun SettingsRoute(
         onContextFoldingExcerptCharLimitChange = viewModel::updateContextFoldingExcerptCharLimit,
         onContextFoldingMaxSummaryEntriesChange = viewModel::updateContextFoldingMaxSummaryEntries,
         onTopicSummaryModelChange = viewModel::updateTopicSummaryModel,
+        onForumUsernameChange = viewModel::updateForumUsername,
+        onForumPasswordChange = viewModel::updateForumPassword,
+        onForumReplyNameChange = viewModel::updateForumReplyName,
+        onForumRememberCredentialsChange = viewModel::updateForumRememberCredentials,
+        onOverlayApiUrlChange = viewModel::updateOverlayApiUrl,
+        onOverlayApiKeyChange = viewModel::updateOverlayApiKey,
+        onOverlayModelChange = viewModel::updateOverlayModel,
         onSave = {
             scope.launch {
                 if (viewModel.save()) {
@@ -452,17 +554,43 @@ private fun SettingsScreen(
     onExport: () -> Unit,
     onShareLatestExport: () -> Unit,
     onSaveLatestExportCopy: () -> Unit,
+    onForumUsernameChange: (String) -> Unit = {},
+    onForumPasswordChange: (String) -> Unit = {},
+    onForumReplyNameChange: (String) -> Unit = {},
+    onForumRememberCredentialsChange: (Boolean) -> Unit = {},
+    onOverlayApiUrlChange: (String) -> Unit = {},
+    onOverlayApiKeyChange: (String) -> Unit = {},
+    onOverlayModelChange: (String) -> Unit = {},
 ) {
+    // ── Staggered entrance animation state ──
+    val cardCount = if (isSetup) 8 else 9
+    val animProgress = remember { List(cardCount) { Animatable(0f) } }
+    LaunchedEffect(Unit) {
+        animProgress.forEachIndexed { index, anim ->
+            delay(index * 60L)
+            anim.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioLowBouncy,
+                    stiffness = Spring.StiffnessLow,
+                ),
+            )
+        }
+    }
+
+    // Expandable state for "上下文折叠" section
+    var contextFoldingExpanded by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
-                        brush = Brush.horizontalGradient(
+                        brush = Brush.verticalGradient(
                             colors = listOf(
                                 MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.secondary
+                                MaterialTheme.colorScheme.tertiary.copy(alpha = 0.85f),
                             )
                         )
                     )
@@ -506,12 +634,18 @@ private fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .padding(horizontal = 20.dp, vertical = 16.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            
-            AnimeSettingsCard(
+            // Card index tracker
+            var ci = 0
+
+            // ── 1. Core Connection ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.Hub,
+                accentColors = listOf(Color(0xFF007AFF), Color(0xFF5856D6)),
                 title = "核心连接",
                 subtitle = "先把灵魂连接参数固定下来，之后 Bootstrap 才能恢复到 Agent -> Topic -> Chat 主工作流哦～"
             ) {
@@ -537,7 +671,11 @@ private fun SettingsScreen(
                 )
             }
 
-            AnimeSettingsCard(
+            // ── 2. Broadcast ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.CellTower,
+                accentColors = listOf(Color(0xFF34C759), Color(0xFF30D158)),
                 title = "信息广播",
                 subtitle = "通过 WebSocket 接收 VCP 服务器的实时通知和工具执行日志。"
             ) {
@@ -560,7 +698,11 @@ private fun SettingsScreen(
                 )
             }
 
-            AnimeSettingsCard(
+            // ── 3. Compiler Options ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.Build,
+                accentColors = listOf(Color(0xFFFF9500), Color(0xFFFF3B30)),
                 title = "编译选项",
                 subtitle = "调整底层咒语，适配各种奇妙的运行环境。"
             ) {
@@ -605,66 +747,95 @@ private fun SettingsScreen(
                 )
             }
 
-            AnimeSettingsCard(
+            // ── 4. Context Folding (Collapsible) ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.LayersClear,
+                accentColors = listOf(Color(0xFF5856D6), Color(0xFFAF52DE)),
                 title = "上下文折叠",
-                subtitle = "直接参考 VCPChat `contextFolder.js` 默认值和语义，让伙伴的记忆更长久～"
+                subtitle = "直接参考 VCPChat `contextFolder.js` 默认值和语义，让伙伴的记忆更长久～",
+                trailing = {
+                    Icon(
+                        imageVector = if (contextFoldingExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                        contentDescription = if (contextFoldingExpanded) "收起" else "展开",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                onHeaderClick = { contextFoldingExpanded = !contextFoldingExpanded },
             ) {
-                OutlinedTextField(
-                    value = uiState.contextFoldingKeepRecentMessages,
-                    onValueChange = onContextFoldingKeepRecentMessagesChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "保留最近消息数") },
-                    enabled = uiState.enableContextFolding,
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                OutlinedTextField(
-                    value = uiState.contextFoldingTriggerMessageCount,
-                    onValueChange = onContextFoldingTriggerMessageCountChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "触发消息数阈值") },
-                    enabled = uiState.enableContextFolding,
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                OutlinedTextField(
-                    value = uiState.contextFoldingTriggerCharCount,
-                    onValueChange = onContextFoldingTriggerCharCountChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "触发字符数阈值") },
-                    enabled = uiState.enableContextFolding,
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                OutlinedTextField(
-                    value = uiState.contextFoldingExcerptCharLimit,
-                    onValueChange = onContextFoldingExcerptCharLimitChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "摘要摘录长度") },
-                    enabled = uiState.enableContextFolding,
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                OutlinedTextField(
-                    value = uiState.contextFoldingMaxSummaryEntries,
-                    onValueChange = onContextFoldingMaxSummaryEntriesChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "最大摘要条目数") },
-                    enabled = uiState.enableContextFolding,
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
-                OutlinedTextField(
-                    value = uiState.topicSummaryModel,
-                    onValueChange = onTopicSummaryModelChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(text = "话题自动总结模型") },
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium
-                )
+                AnimatedVisibility(
+                    visible = contextFoldingExpanded,
+                    enter = expandVertically(
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeIn(),
+                    exit = shrinkVertically(
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeOut(),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        OutlinedTextField(
+                            value = uiState.contextFoldingKeepRecentMessages,
+                            onValueChange = onContextFoldingKeepRecentMessagesChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = "保留最近消息数") },
+                            enabled = uiState.enableContextFolding,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        OutlinedTextField(
+                            value = uiState.contextFoldingTriggerMessageCount,
+                            onValueChange = onContextFoldingTriggerMessageCountChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = "触发消息数阈值") },
+                            enabled = uiState.enableContextFolding,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        OutlinedTextField(
+                            value = uiState.contextFoldingTriggerCharCount,
+                            onValueChange = onContextFoldingTriggerCharCountChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = "触发字符数阈值") },
+                            enabled = uiState.enableContextFolding,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        OutlinedTextField(
+                            value = uiState.contextFoldingExcerptCharLimit,
+                            onValueChange = onContextFoldingExcerptCharLimitChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = "摘要摘录长度") },
+                            enabled = uiState.enableContextFolding,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        OutlinedTextField(
+                            value = uiState.contextFoldingMaxSummaryEntries,
+                            onValueChange = onContextFoldingMaxSummaryEntriesChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = "最大摘要条目数") },
+                            enabled = uiState.enableContextFolding,
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                        OutlinedTextField(
+                            value = uiState.topicSummaryModel,
+                            onValueChange = onTopicSummaryModelChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(text = "话题自动总结模型") },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.medium
+                        )
+                    }
+                }
             }
 
-            AnimeSettingsCard(
+            // ── 5. Available Models ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.SmartToy,
+                accentColors = listOf(Color(0xFF0A84FF), Color(0xFF64D2FF)),
                 title = "可用模型",
                 subtitle = "按 VCPChat 的方式从 `${uiState.serverUrl.ifBlank { "(未配置)" }}` 对应的 `/v1/models` 获取。"
             ) {
@@ -706,7 +877,51 @@ private fun SettingsScreen(
                 }
             }
 
-            AnimeSettingsCard(
+            // ── 6. Module Config ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.Forum,
+                accentColors = listOf(Color(0xFFFF2D55), Color(0xFFFF6482)),
+                title = "模块配置",
+                subtitle = "Forum / Memo / 日记 等模块共享此凭据连接 VCP 服务器。"
+            ) {
+                OutlinedTextField(
+                    value = uiState.forumUsername,
+                    onValueChange = onForumUsernameChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Forum 用户名") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                OutlinedTextField(
+                    value = uiState.forumPassword,
+                    onValueChange = onForumPasswordChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Forum 密码") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                OutlinedTextField(
+                    value = uiState.forumReplyName,
+                    onValueChange = onForumReplyNameChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("回帖署名（留空则用用户名）") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                SettingsToggleRow(
+                    title = "记住登录信息",
+                    subtitle = "关闭则不保存密码到本地。",
+                    checked = uiState.forumRememberCredentials,
+                    onCheckedChange = onForumRememberCredentialsChange,
+                )
+            }
+
+            // ── 7. Data Directory ──
+            AnimatedSettingsCard(
+                progress = animProgress[ci++],
+                icon = Icons.Outlined.FolderOpen,
+                accentColors = listOf(Color(0xFF8E8E93), Color(0xFFAEAEB2)),
                 title = "数据目录",
                 subtitle = "运行时真相来源固定为 DataStore + Room + private files。"
             ) {
@@ -723,8 +938,12 @@ private fun SettingsScreen(
                 )
             }
 
+            // ── 8. Data Backup ──
             if (!isSetup) {
-                AnimeSettingsCard(
+                AnimatedSettingsCard(
+                    progress = animProgress[ci],
+                    icon = Icons.Outlined.Backup,
+                    accentColors = listOf(Color(0xFF34C759), Color(0xFF00C7BE)),
                     title = "数据备份",
                     subtitle = "从当前运行时真相和 compat view 重建桌面风格 AppData，并补回 passthrough 空位。"
                 ) {
@@ -771,6 +990,80 @@ private fun SettingsScreen(
                 }
             }
 
+            // ── AI Floating Window ──
+            if (!isSetup) {
+                val context = LocalContext.current
+                var isOverlayRunning by remember {
+                    mutableStateOf(com.vcpnative.app.feature.overlay.AiOverlayService.isRunning())
+                }
+                AnimatedSettingsCard(
+                    progress = animProgress[ci - 1],
+                    icon = Icons.Outlined.SmartToy,
+                    accentColors = listOf(Color(0xFF6C5CE7), Color(0xFFA29BFE)),
+                    title = "AI 悬浮助手",
+                    subtitle = "在任意应用上方显示悬浮窗，支持截屏识图和 AI 对话。"
+                ) {
+                    SettingsToggleRow(
+                        title = "启用悬浮助手",
+                        subtitle = "需要在系统无障碍设置中开启本应用的无障碍服务。",
+                        checked = isOverlayRunning,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                // Open system accessibility settings
+                                val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                            } else {
+                                // Disable by opening accessibility settings (user must toggle off)
+                                val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                            }
+                        },
+                    )
+                    Text(
+                        text = if (isOverlayRunning) "服务运行中" else "请在无障碍设置中启用 VCPNative",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOverlayRunning) Color(0xFF34C759) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "悬浮窗独立 API 配置（留空则跟随全局设置）",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = uiState.overlayApiUrl,
+                        onValueChange = onOverlayApiUrlChange,
+                        label = { Text("API 地址") },
+                        placeholder = { Text("留空跟随全局") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = uiState.overlayApiKey,
+                        onValueChange = onOverlayApiKeyChange,
+                        label = { Text("API Key") },
+                        placeholder = { Text("留空跟随全局") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = uiState.overlayModel,
+                        onValueChange = onOverlayModelChange,
+                        label = { Text("模型") },
+                        placeholder = { Text("默认 gemini-2.5-flash") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
+            // ── Save CTA with gradient ──
+            val saveBtnAlpha = animProgress.last()
             Button(
                 onClick = onSave,
                 enabled = uiState.canSave,
@@ -778,40 +1071,101 @@ private fun SettingsScreen(
                     .fillMaxWidth()
                     .padding(vertical = 8.dp)
                     .height(56.dp)
+                    .graphicsLayer {
+                        alpha = saveBtnAlpha.value
+                        translationY = (1f - saveBtnAlpha.value) * 40f
+                    }
                     .semantics { contentDescription = "save_settings_button" },
-                shape = MaterialTheme.shapes.large
+                shape = MaterialTheme.shapes.large,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.Transparent,
+                ),
+                contentPadding = ButtonDefaults.ContentPadding,
             ) {
-                Text(
-                    text = if (uiState.isSaving) "保存中…" else "保存并继续",
-                    fontWeight = FontWeight.ExtraBold,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = if (uiState.canSave) {
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.primary,
+                                        MaterialTheme.colorScheme.tertiary,
+                                    )
+                                )
+                            } else {
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                    )
+                                )
+                            },
+                            shape = MaterialTheme.shapes.large,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Save,
+                            contentDescription = null,
+                            tint = if (uiState.canSave) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Text(
+                            text = if (uiState.isSaving) "保存中…" else "保存并继续",
+                            fontWeight = FontWeight.ExtraBold,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (uiState.canSave) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        )
+                    }
+                }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 }
 
 @Composable
-private fun AnimeSettingsCard(
+private fun AnimatedSettingsCard(
+    progress: Animatable<Float, *>,
+    icon: ImageVector,
+    accentColors: List<Color>,
     title: String,
     subtitle: String? = null,
-    content: @Composable () -> Unit
+    trailing: (@Composable () -> Unit)? = null,
+    onHeaderClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-        shape = MaterialTheme.shapes.medium
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = progress.value
+                translationY = (1f - progress.value) * 60f
+                scaleX = 0.92f + 0.08f * progress.value
+                scaleY = 0.92f + 0.08f * progress.value
+            },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = MaterialTheme.shapes.medium,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(IntrinsicSize.Min)
         ) {
+            // Gradient accent stripe
             Box(
                 modifier = Modifier
                     .width(4.dp)
                     .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .background(
+                        brush = Brush.verticalGradient(colors = accentColors)
+                    )
             )
             Column(
                 modifier = Modifier
@@ -819,19 +1173,56 @@ private fun AnimeSettingsCard(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    if (subtitle != null) {
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                // Header row: icon + title + optional trailing
+                val headerModifier = if (onHeaderClick != null) {
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onHeaderClick)
+                } else {
+                    Modifier.fillMaxWidth()
+                }
+                Row(
+                    modifier = headerModifier,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Section icon with tinted background
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(
+                                color = accentColors.first().copy(alpha = 0.12f),
+                                shape = MaterialTheme.shapes.small,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = accentColors.first(),
+                            modifier = Modifier.size(20.dp),
                         )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        if (subtitle != null) {
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (trailing != null) {
+                        trailing()
                     }
                 }
                 content()
@@ -936,6 +1327,12 @@ private fun SettingsToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
         )
     }
 }

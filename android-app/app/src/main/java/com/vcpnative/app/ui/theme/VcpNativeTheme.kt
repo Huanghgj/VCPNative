@@ -13,89 +13,91 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ── Apple-inspired clean design ──────────────────────────────────────
-// Primary: System Blue | Secondary: System Green | Tertiary: System Purple
-// Clean, confident, understated. Generous whitespace, precise typography.
+// ── 猫娘主题喵～ ──────────────────────────────────────────────────
+// Primary: 樱花粉 | Secondary: 薰衣草紫 | Tertiary: 薄荷绿
+// 柔软、温暖、有活力。大圆角、充裕留白、轻盈排版。
+// 深色模式保留粉紫调性，用深莓果色打底。
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF007AFF),
+    primary = Color(0xFFE8618C),            // 樱花粉 — 主角色
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFDCE8FF),
-    onPrimaryContainer = Color(0xFF001A41),
-    secondary = Color(0xFF34C759),
+    primaryContainer = Color(0xFFFFD9E3),    // 淡樱花 — 选中态/指示器
+    onPrimaryContainer = Color(0xFF3E0021),
+    secondary = Color(0xFF9C7CB5),           // 薰衣草紫 — 辅助色
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFD4F5DD),
-    onSecondaryContainer = Color(0xFF002110),
-    tertiary = Color(0xFF5856D6),
+    secondaryContainer = Color(0xFFEDE0F7),  // 淡紫 — 助理气泡
+    onSecondaryContainer = Color(0xFF2B0047),
+    tertiary = Color(0xFF5BBFAD),            // 薄荷绿 — 成功/强调
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFE4E0FF),
-    onTertiaryContainer = Color(0xFF140064),
-    background = Color(0xFFF2F2F7),
-    onBackground = Color(0xFF1C1C1E),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1C1C1E),
-    surfaceVariant = Color(0xFFF2F2F7),
-    onSurfaceVariant = Color(0xFF8E8E93),
-    surfaceContainerHighest = Color(0xFFE5E5EA),
-    surfaceContainerHigh = Color(0xFFF2F2F7),
-    surfaceContainer = Color(0xFFF9F9FB),
-    error = Color(0xFFFF3B30),
+    tertiaryContainer = Color(0xFFCDF5EC),
+    onTertiaryContainer = Color(0xFF00382D),
+    background = Color(0xFFFFF5F8),          // 奶油粉底 — 整体背景
+    onBackground = Color(0xFF2D1F28),
+    surface = Color(0xFFFFFBFC),             // 微粉白 — 卡片/面板
+    onSurface = Color(0xFF2D1F28),
+    surfaceVariant = Color(0xFFFFF0F4),      // 浅粉 — 分组背景
+    onSurfaceVariant = Color(0xFF8C7884),
+    surfaceContainerHighest = Color(0xFFF3DDE4),
+    surfaceContainerHigh = Color(0xFFFFF0F4),
+    surfaceContainer = Color(0xFFFFF7F9),
+    error = Color(0xFFE5395B),               // 玫红 — 不那么刺眼的错误色
     onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFFDAD6),
-    onErrorContainer = Color(0xFF410002),
-    outline = Color(0xFFC6C6C8),
-    outlineVariant = Color(0xFFE5E5EA),
+    errorContainer = Color(0xFFFFDADE),
+    onErrorContainer = Color(0xFF410010),
+    outline = Color(0xFFD4BCC5),             // 藕粉 — 分割线
+    outlineVariant = Color(0xFFF0DEE5),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF0A84FF),
+    primary = Color(0xFFFF8DAF),             // 亮樱花粉
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFF003A75),
-    onPrimaryContainer = Color(0xFFD1E4FF),
-    secondary = Color(0xFF30D158),
+    primaryContainer = Color(0xFF6B2040),    // 深莓红
+    onPrimaryContainer = Color(0xFFFFD9E3),
+    secondary = Color(0xFFCDB0E0),           // 亮薰衣草
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFF004D25),
-    onSecondaryContainer = Color(0xFFD4F5DD),
-    tertiary = Color(0xFF7D7AFF),
-    onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFF3B3799),
-    onTertiaryContainer = Color(0xFFE4E0FF),
-    background = Color(0xFF000000),
-    onBackground = Color(0xFFE5E5E5),
-    surface = Color(0xFF1C1C1E),
-    onSurface = Color(0xFFE5E5E5),
-    surfaceVariant = Color(0xFF2C2C2E),
-    onSurfaceVariant = Color(0xFF8E8E93),
-    surfaceContainerHighest = Color(0xFF3A3A3C),
-    surfaceContainerHigh = Color(0xFF2C2C2E),
-    surfaceContainer = Color(0xFF1C1C1E),
-    error = Color(0xFFFF453A),
+    secondaryContainer = Color(0xFF4A3560),  // 深紫
+    onSecondaryContainer = Color(0xFFEDE0F7),
+    tertiary = Color(0xFF7DDFC3),            // 亮薄荷
+    onTertiary = Color(0xFF003830),
+    tertiaryContainer = Color(0xFF1E5247),
+    onTertiaryContainer = Color(0xFFCDF5EC),
+    background = Color(0xFF1A1520),          // 深莓果黑 — 不是纯黑，有温度
+    onBackground = Color(0xFFECDFE5),
+    surface = Color(0xFF251F2A),             // 深紫灰
+    onSurface = Color(0xFFECDFE5),
+    surfaceVariant = Color(0xFF332B38),
+    onSurfaceVariant = Color(0xFFA08C98),
+    surfaceContainerHighest = Color(0xFF443A4A),
+    surfaceContainerHigh = Color(0xFF332B38),
+    surfaceContainer = Color(0xFF251F2A),
+    error = Color(0xFFFF6B82),               // 柔玫红
     onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
-    outline = Color(0xFF38383A),
-    outlineVariant = Color(0xFF48484A),
+    errorContainer = Color(0xFF8C0020),
+    onErrorContainer = Color(0xFFFFDADE),
+    outline = Color(0xFF4A3F4E),
+    outlineVariant = Color(0xFF3D3342),
 )
 
-// Restrained, precise corner radii
+// 猫猫的圆角要更大更软糯喵～
 private val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(24.dp),
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(14.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(32.dp),
 )
 
-// Clean, tight typography — confidence without shouting
+// 猫娘排版：标题柔和圆润，正文舒适好读喵
 private val AppTypography = Typography().let { base ->
     base.copy(
         headlineLarge = base.headlineLarge.copy(
             fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.5).sp,
+            letterSpacing = (-0.3).sp,
+            lineHeight = 40.sp,
         ),
         headlineMedium = base.headlineMedium.copy(
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.25).sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.sp,
         ),
         headlineSmall = base.headlineSmall.copy(
             fontWeight = FontWeight.SemiBold,
@@ -105,14 +107,15 @@ private val AppTypography = Typography().let { base ->
         ),
         titleMedium = base.titleMedium.copy(
             fontWeight = FontWeight.Medium,
+            letterSpacing = 0.15.sp,
         ),
         bodyLarge = base.bodyLarge.copy(
             fontWeight = FontWeight.Normal,
-            lineHeight = 22.sp,
+            lineHeight = 24.sp,    // 行间距大一点读起来更舒服喵
         ),
         bodyMedium = base.bodyMedium.copy(
             fontWeight = FontWeight.Normal,
-            lineHeight = 20.sp,
+            lineHeight = 22.sp,
         ),
         labelLarge = base.labelLarge.copy(
             fontWeight = FontWeight.Medium,

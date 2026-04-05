@@ -2,12 +2,15 @@ package com.vcpnative.app.data.datastore
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.vcpnative.app.bridge.BridgeLogger
 import com.vcpnative.app.data.files.AppFileStore
+import com.vcpnative.app.data.files.AtomicFileWriter
 import com.vcpnative.app.model.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +45,20 @@ interface SettingsRepository {
     )
 
     suspend fun saveLastSession(agentId: String?, topicId: String?)
+
+    suspend fun saveFloatingWindowEnabled(enabled: Boolean)
+
+    suspend fun saveOverlayApiConfig(apiUrl: String, apiKey: String, model: String)
+
+    suspend fun applyCompatSettings(settings: AppSettings)
+
+    /**
+     * Read settings with three-layer fallback: DataStore -> compat backup -> defaults.
+     *
+     * Ported from VCPMobile `app_settings_manager.rs` 3-stage recovery.
+     * Use this at bootstrap to guarantee a non-null result even on corruption.
+     */
+    suspend fun currentSettingsWithRecovery(): AppSettings
 }
 
 class DataStoreSettingsRepository(
@@ -56,13 +73,15 @@ class DataStoreSettingsRepository(
     override suspend fun currentSettings(): AppSettings = settings.first()
 
     override suspend fun saveConnection(serverUrl: String, apiKey: String, vcpLogUrl: String, vcpLogKey: String) {
-        context.appSettingsDataStore.edit { preferences ->
-            preferences[Keys.VCP_SERVER_URL] = serverUrl.trim()
-            preferences[Keys.VCP_API_KEY] = apiKey.trim()
-            preferences[Keys.VCP_LOG_URL] = vcpLogUrl.trim()
-            preferences[Keys.VCP_LOG_KEY] = vcpLogKey.trim()
-        }
-        syncCompatSettings(currentSettings())
+        applySettings(
+            currentSettings().copy(
+                vcpServerUrl = serverUrl.trim(),
+                vcpApiKey = apiKey.trim(),
+                vcpLogUrl = vcpLogUrl.trim(),
+                vcpLogKey = vcpLogKey.trim(),
+            ),
+            syncCompatFile = true,
+        )
     }
 
     override suspend fun saveCompilerOptions(
@@ -79,51 +98,93 @@ class DataStoreSettingsRepository(
         contextFoldingMaxSummaryEntries: Int,
         topicSummaryModel: String,
     ) {
-        context.appSettingsDataStore.edit { preferences ->
-            preferences[Keys.ENABLE_VCP_TOOL_INJECTION] = enableVcpToolInjection
-            preferences[Keys.ENABLE_AGENT_BUBBLE_THEME] = enableAgentBubbleTheme
-            preferences[Keys.ENABLE_THOUGHT_CHAIN_INJECTION] = enableThoughtChainInjection
-            preferences[Keys.ENABLE_CONTEXT_SANITIZER] = enableContextSanitizer
-            preferences[Keys.CONTEXT_SANITIZER_DEPTH] = contextSanitizerDepth
-            preferences[Keys.ENABLE_CONTEXT_FOLDING] = enableContextFolding
-            preferences[Keys.CONTEXT_FOLDING_KEEP_RECENT_MESSAGES] = contextFoldingKeepRecentMessages
-            preferences[Keys.CONTEXT_FOLDING_TRIGGER_MESSAGE_COUNT] = contextFoldingTriggerMessageCount
-            preferences[Keys.CONTEXT_FOLDING_TRIGGER_CHAR_COUNT] = contextFoldingTriggerCharCount
-            preferences[Keys.CONTEXT_FOLDING_EXCERPT_CHAR_LIMIT] = contextFoldingExcerptCharLimit
-            preferences[Keys.CONTEXT_FOLDING_MAX_SUMMARY_ENTRIES] = contextFoldingMaxSummaryEntries
-            preferences[Keys.TOPIC_SUMMARY_MODEL] = topicSummaryModel
-        }
-        syncCompatSettings(currentSettings())
+        applySettings(
+            currentSettings().copy(
+                enableVcpToolInjection = enableVcpToolInjection,
+                enableAgentBubbleTheme = enableAgentBubbleTheme,
+                enableThoughtChainInjection = enableThoughtChainInjection,
+                enableContextSanitizer = enableContextSanitizer,
+                contextSanitizerDepth = contextSanitizerDepth,
+                enableContextFolding = enableContextFolding,
+                contextFoldingKeepRecentMessages = contextFoldingKeepRecentMessages,
+                contextFoldingTriggerMessageCount = contextFoldingTriggerMessageCount,
+                contextFoldingTriggerCharCount = contextFoldingTriggerCharCount,
+                contextFoldingExcerptCharLimit = contextFoldingExcerptCharLimit,
+                contextFoldingMaxSummaryEntries = contextFoldingMaxSummaryEntries,
+                topicSummaryModel = topicSummaryModel,
+            ),
+            syncCompatFile = true,
+        )
     }
 
     override suspend fun saveLastSession(agentId: String?, topicId: String?) {
-        context.appSettingsDataStore.edit { preferences ->
-            if (agentId.isNullOrBlank()) {
-                preferences.remove(Keys.LAST_AGENT_ID)
-            } else {
-                preferences[Keys.LAST_AGENT_ID] = agentId
-            }
+        applyLastSession(agentId = agentId, topicId = topicId, syncCompatFile = true)
+    }
 
-            if (topicId.isNullOrBlank()) {
-                preferences.remove(Keys.LAST_TOPIC_ID)
-            } else {
-                preferences[Keys.LAST_TOPIC_ID] = topicId
-            }
+    override suspend fun saveFloatingWindowEnabled(enabled: Boolean) {
+        context.appSettingsDataStore.edit { preferences ->
+            preferences[Keys.ENABLE_FLOATING_WINDOW] = enabled
         }
-        // Skip full syncCompatSettings for session tracking — only write
-        // the two fields that changed to avoid redundant I/O on every chat entry.
-        withContext(Dispatchers.IO) {
-            val settingsFile = fileStore.compatSettingsFile()
-            if (settingsFile.isFile) {
-                val json = readCompatSettings(settingsFile)
-                json.put("lastOpenItemId", agentId)
-                json.put("lastAgentId", agentId)
-                json.put("lastOpenTopicId", topicId)
-                json.put("lastTopicId", topicId)
-                settingsFile.writeText(json.toString(2))
+    }
+
+    override suspend fun saveOverlayApiConfig(apiUrl: String, apiKey: String, model: String) {
+        context.appSettingsDataStore.edit { preferences ->
+            preferences[Keys.OVERLAY_API_URL] = apiUrl.trim()
+            preferences[Keys.OVERLAY_API_KEY] = apiKey.trim()
+            preferences[Keys.OVERLAY_MODEL] = model.trim()
+        }
+    }
+
+    override suspend fun applyCompatSettings(settings: AppSettings) {
+        applySettings(settings, syncCompatFile = false)
+    }
+
+    override suspend fun currentSettingsWithRecovery(): AppSettings {
+        // Layer 1: DataStore (primary)
+        return try {
+            AtomicFileWriter.retryWithBackoff(maxRetries = 3, initialDelayMs = 50) {
+                currentSettings()
+            }
+        } catch (e: Exception) {
+            BridgeLogger.w("SettingsRepo", "DataStore read failed, trying compat backup: ${e.message}")
+            // Layer 2: compat settings.json backup
+            try {
+                val backupFile = fileStore.compatSettingsFile()
+                if (backupFile.exists()) {
+                    val json = readCompatSettings(backupFile)
+                    parseCompatSettingsJson(json)
+                } else {
+                    throw java.io.FileNotFoundException("No compat backup")
+                }
+            } catch (e2: Exception) {
+                BridgeLogger.w("SettingsRepo", "Backup read failed, using defaults: ${e2.message}")
+                // Layer 3: defaults
+                AppSettings()
             }
         }
     }
+
+    /** Parse an AppSettings from a compat JSON (best-effort). */
+    private fun parseCompatSettingsJson(json: JSONObject): AppSettings = AppSettings(
+        vcpServerUrl = json.optString("vcpServerUrl", ""),
+        vcpApiKey = json.optString("vcpApiKey", ""),
+        vcpLogUrl = json.optString("vcpLogUrl", ""),
+        vcpLogKey = json.optString("vcpLogKey", ""),
+        enableVcpToolInjection = json.optBoolean("enableVcpToolInjection", false),
+        enableAgentBubbleTheme = json.optBoolean("enableAgentBubbleTheme", false),
+        enableThoughtChainInjection = json.optBoolean("enableThoughtChainInjection", false),
+        enableContextSanitizer = json.optBoolean("enableContextSanitizer", true),
+        contextSanitizerDepth = json.optInt("contextSanitizerDepth", 2),
+        enableContextFolding = json.optBoolean("enableContextFolding", true),
+        contextFoldingKeepRecentMessages = json.optInt("contextFoldingKeepRecentMessages", 12),
+        contextFoldingTriggerMessageCount = json.optInt("contextFoldingTriggerMessageCount", 24),
+        contextFoldingTriggerCharCount = json.optInt("contextFoldingTriggerCharCount", 24000),
+        contextFoldingExcerptCharLimit = json.optInt("contextFoldingExcerptCharLimit", 160),
+        contextFoldingMaxSummaryEntries = json.optInt("contextFoldingMaxSummaryEntries", 40),
+        topicSummaryModel = json.optString("topicSummaryModel", "gemini-2.5-flash"),
+        lastAgentId = json.optString("lastAgentId").takeIf { it.isNotBlank() },
+        lastTopicId = json.optString("lastTopicId").takeIf { it.isNotBlank() },
+    )
 
     private fun Preferences.toAppSettings(): AppSettings = AppSettings(
         vcpServerUrl = this[Keys.VCP_SERVER_URL].orEmpty(),
@@ -142,6 +203,10 @@ class DataStoreSettingsRepository(
         contextFoldingExcerptCharLimit = this[Keys.CONTEXT_FOLDING_EXCERPT_CHAR_LIMIT] ?: 160,
         contextFoldingMaxSummaryEntries = this[Keys.CONTEXT_FOLDING_MAX_SUMMARY_ENTRIES] ?: 40,
         topicSummaryModel = this[Keys.TOPIC_SUMMARY_MODEL] ?: "gemini-2.5-flash",
+        enableFloatingWindow = this[Keys.ENABLE_FLOATING_WINDOW] ?: false,
+        overlayApiUrl = this[Keys.OVERLAY_API_URL].orEmpty(),
+        overlayApiKey = this[Keys.OVERLAY_API_KEY].orEmpty(),
+        overlayModel = this[Keys.OVERLAY_MODEL].orEmpty(),
         lastAgentId = this[Keys.LAST_AGENT_ID],
         lastTopicId = this[Keys.LAST_TOPIC_ID],
     )
@@ -163,6 +228,10 @@ class DataStoreSettingsRepository(
         val CONTEXT_FOLDING_EXCERPT_CHAR_LIMIT = intPreferencesKey("context_folding_excerpt_char_limit")
         val CONTEXT_FOLDING_MAX_SUMMARY_ENTRIES = intPreferencesKey("context_folding_max_summary_entries")
         val TOPIC_SUMMARY_MODEL = stringPreferencesKey("topic_summary_model")
+        val ENABLE_FLOATING_WINDOW = booleanPreferencesKey("enable_floating_window")
+        val OVERLAY_API_URL = stringPreferencesKey("overlay_api_url")
+        val OVERLAY_API_KEY = stringPreferencesKey("overlay_api_key")
+        val OVERLAY_MODEL = stringPreferencesKey("overlay_model")
         val LAST_AGENT_ID = stringPreferencesKey("last_agent_id")
         val LAST_TOPIC_ID = stringPreferencesKey("last_topic_id")
     }
@@ -192,7 +261,77 @@ class DataStoreSettingsRepository(
             put("lastOpenTopicId", settings.lastTopicId)
             put("lastTopicId", settings.lastTopicId)
         }
-        settingsFile.writeText(json.toString(2))
+        AtomicFileWriter.writeJson(settingsFile, json.toString(2))
+    }
+
+    private suspend fun applySettings(
+        settings: AppSettings,
+        syncCompatFile: Boolean,
+    ) {
+        context.appSettingsDataStore.edit { preferences ->
+            preferences[Keys.VCP_SERVER_URL] = settings.vcpServerUrl
+            preferences[Keys.VCP_API_KEY] = settings.vcpApiKey
+            preferences[Keys.VCP_LOG_URL] = settings.vcpLogUrl
+            preferences[Keys.VCP_LOG_KEY] = settings.vcpLogKey
+            preferences[Keys.ENABLE_VCP_TOOL_INJECTION] = settings.enableVcpToolInjection
+            preferences[Keys.ENABLE_AGENT_BUBBLE_THEME] = settings.enableAgentBubbleTheme
+            preferences[Keys.ENABLE_THOUGHT_CHAIN_INJECTION] = settings.enableThoughtChainInjection
+            preferences[Keys.ENABLE_CONTEXT_SANITIZER] = settings.enableContextSanitizer
+            preferences[Keys.CONTEXT_SANITIZER_DEPTH] = settings.contextSanitizerDepth
+            preferences[Keys.ENABLE_CONTEXT_FOLDING] = settings.enableContextFolding
+            preferences[Keys.CONTEXT_FOLDING_KEEP_RECENT_MESSAGES] = settings.contextFoldingKeepRecentMessages
+            preferences[Keys.CONTEXT_FOLDING_TRIGGER_MESSAGE_COUNT] = settings.contextFoldingTriggerMessageCount
+            preferences[Keys.CONTEXT_FOLDING_TRIGGER_CHAR_COUNT] = settings.contextFoldingTriggerCharCount
+            preferences[Keys.CONTEXT_FOLDING_EXCERPT_CHAR_LIMIT] = settings.contextFoldingExcerptCharLimit
+            preferences[Keys.CONTEXT_FOLDING_MAX_SUMMARY_ENTRIES] = settings.contextFoldingMaxSummaryEntries
+            preferences[Keys.TOPIC_SUMMARY_MODEL] = settings.topicSummaryModel
+            preferences[Keys.ENABLE_FLOATING_WINDOW] = settings.enableFloatingWindow
+            preferences[Keys.OVERLAY_API_URL] = settings.overlayApiUrl
+            preferences[Keys.OVERLAY_API_KEY] = settings.overlayApiKey
+            preferences[Keys.OVERLAY_MODEL] = settings.overlayModel
+            putNullable(preferences, Keys.LAST_AGENT_ID, settings.lastAgentId)
+            putNullable(preferences, Keys.LAST_TOPIC_ID, settings.lastTopicId)
+        }
+        if (syncCompatFile) {
+            syncCompatSettings(settings)
+        }
+    }
+
+    private suspend fun applyLastSession(
+        agentId: String?,
+        topicId: String?,
+        syncCompatFile: Boolean,
+    ) {
+        context.appSettingsDataStore.edit { preferences ->
+            putNullable(preferences, Keys.LAST_AGENT_ID, agentId)
+            putNullable(preferences, Keys.LAST_TOPIC_ID, topicId)
+        }
+        if (!syncCompatFile) {
+            return
+        }
+        withContext(Dispatchers.IO) {
+            val settingsFile = fileStore.compatSettingsFile()
+            if (settingsFile.isFile) {
+                val json = readCompatSettings(settingsFile)
+                json.put("lastOpenItemId", agentId)
+                json.put("lastAgentId", agentId)
+                json.put("lastOpenTopicId", topicId)
+                json.put("lastTopicId", topicId)
+                AtomicFileWriter.writeJson(settingsFile, json.toString(2))
+            }
+        }
+    }
+
+    private fun putNullable(
+        preferences: MutablePreferences,
+        key: Preferences.Key<String>,
+        value: String?,
+    ) {
+        if (value.isNullOrBlank()) {
+            preferences.remove(key)
+        } else {
+            preferences[key] = value
+        }
     }
 
     private fun readCompatSettings(settingsFile: java.io.File): JSONObject {
@@ -201,8 +340,10 @@ class DataStoreSettingsRepository(
         }
 
         return try {
-            JSONObject(settingsFile.readText())
-        } catch (_: JSONException) {
+            val text = settingsFile.readText()
+            if (text.isBlank()) JSONObject() else JSONObject(text)
+        } catch (e: JSONException) {
+            android.util.Log.w("SettingsRepo", "Compat settings corrupted, resetting: ${e.message}")
             JSONObject()
         }
     }

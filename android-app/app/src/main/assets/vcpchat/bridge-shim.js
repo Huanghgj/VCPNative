@@ -21,8 +21,9 @@
 
     // ---- Internal helpers ----
 
+    // SECURITY: IDs must be unpredictable to prevent spoofed resolve/reject calls from injected scripts
     function generateId() {
-        return '__vcp_' + (nextId++);
+        return '__vcp_' + (nextId++) + '_' + Math.random().toString(36).substr(2, 6) + '_' + Date.now().toString(36);
     }
 
     /**
@@ -131,6 +132,186 @@
                     console.error('[VcpBridge] listener error on', channel, e);
                 }
             }
+        }
+    };
+
+    // ---- Stream rendering optimizer ----
+    // Exact port of VCPMobile streamManager.ts:
+    // Character-level semantic queue + continuous RAF loop + adaptive step sizing.
+    // Ensures smooth 60fps typing animation regardless of backend chunk rate.
+
+    var _streamBuffers = {};
+    // messageId -> {
+    //   fullText: string,           // accumulated raw text
+    //   displayedText: string,      // text shown so far
+    //   semanticQueue: char[],      // character queue (NOT chunk queue)
+    //   isFinishing: boolean,       // backend sent [DONE]
+    //   onCompleteCallback: fn,     // called when queue drained after finish
+    //   loopRunning: boolean        // prevent duplicate RAF loops
+    // }
+
+    function _emitStreamData(messageId, chunk) {
+        var evt = { messageId: messageId, type: 'data', chunk: chunk };
+        var cbs = listeners['vcp-stream-event'];
+        if (!cbs) return;
+        for (var j = 0; j < cbs.length; j++) {
+            try { cbs[j](evt); } catch (e) { console.error('[StreamBuf] listener error', e); }
+        }
+    }
+
+    function _startStreamLoop(messageId) {
+        var buf = _streamBuffers[messageId];
+        if (!buf || buf.loopRunning) return;
+        buf.loopRunning = true;
+
+        function loop() {
+            var b = _streamBuffers[messageId];
+            if (!b) return;
+
+            if (b.semanticQueue.length > 0) {
+                // Adaptive step: more chars per frame when backlog is large
+                // Exact VCPMobile formula: Math.max(1, Math.ceil(backlog / 8))
+                var backlog = b.semanticQueue.length;
+                var step = Math.max(1, Math.ceil(backlog / 8));
+                var added = '';
+                for (var i = 0; i < step; i++) {
+                    var ch = b.semanticQueue.shift();
+                    if (ch) added += ch;
+                    else break;
+                }
+                if (added) {
+                    b.displayedText += added;
+                    _emitStreamData(messageId, added);
+                }
+            }
+
+            // Termination: queue empty AND backend finished
+            if (b.isFinishing && b.semanticQueue.length === 0) {
+                b.loopRunning = false;
+                if (b.onCompleteCallback) {
+                    try { b.onCompleteCallback(); } catch (e) {}
+                }
+                delete _streamBuffers[messageId];
+            } else {
+                requestAnimationFrame(loop);
+            }
+        }
+        requestAnimationFrame(loop);
+    }
+
+    function _appendStreamChunk(messageId, chunk) {
+        if (!_streamBuffers[messageId]) {
+            // First chunk: initialize buffer + start RAF loop
+            var chars = [];
+            for (var i = 0; i < chunk.length; i++) chars.push(chunk[i]);
+            _streamBuffers[messageId] = {
+                fullText: chunk,
+                displayedText: '',
+                semanticQueue: chars,
+                isFinishing: false,
+                onCompleteCallback: null,
+                loopRunning: false
+            };
+            _startStreamLoop(messageId);
+        } else {
+            var buf = _streamBuffers[messageId];
+            buf.fullText += chunk;
+            // Reset finishing flag if new chunk arrives after [DONE] (edge case)
+            if (buf.isFinishing) buf.isFinishing = false;
+            // Push chars one by one (NEVER use push(...chunk) to avoid stack overflow)
+            for (var j = 0; j < chunk.length; j++) {
+                buf.semanticQueue.push(chunk[j]);
+            }
+            // Restart loop if it stopped
+            if (!buf.loopRunning) _startStreamLoop(messageId);
+        }
+    }
+
+    function _finalizeStream(messageId, onComplete) {
+        var buf = _streamBuffers[messageId];
+        if (buf) {
+            buf.isFinishing = true;
+            buf.onCompleteCallback = onComplete || null;
+            // Loop will drain queue then call onComplete and cleanup
+        } else {
+            // Buffer already gone (e.g. empty stream)
+            if (onComplete) try { onComplete(); } catch (e) {}
+        }
+    }
+
+    // Override emit to intercept vcp-stream-event for character-level buffering
+    var _originalEmit = window.__vcpBridge.emit;
+    window.__vcpBridge.emit = function (channel, dataJson) {
+        if (channel !== 'vcp-stream-event') {
+            return _originalEmit.call(window.__vcpBridge, channel, dataJson);
+        }
+        var data;
+        try { data = JSON.parse(dataJson); } catch (e) { data = dataJson; }
+        if (!data || !data.messageId) {
+            return _originalEmit.call(window.__vcpBridge, channel, dataJson);
+        }
+
+        if (data.type === 'data' && data.chunk) {
+            // Feed into character-level stream buffer
+            _appendStreamChunk(data.messageId, data.chunk);
+        } else if (data.type === 'end') {
+            // Signal stream completion; RAF loop drains remaining chars first
+            var fullText = (_streamBuffers[data.messageId] || {}).fullText || '';
+            _finalizeStream(data.messageId, function () {
+                // After all chars displayed, dispatch end event to listeners
+                // Include fullText so listeners can do post-processing (regex, save, summary)
+                data._fullText = fullText;
+                var cbs = listeners[channel];
+                if (cbs) {
+                    for (var i = 0; i < cbs.length; i++) {
+                        try { cbs[i](data); } catch (e) {
+                            console.error('[VcpBridge] listener error on', channel, e);
+                        }
+                    }
+                }
+                // Post-completion chain (ported from VCPMobile chatManager.ts):
+                // 1. Emit vcp-stream-complete for any additional processing
+                var completeCbs = listeners['vcp-stream-complete'];
+                if (completeCbs) {
+                    var completeEvt = { messageId: data.messageId, fullText: fullText };
+                    for (var k = 0; k < completeCbs.length; k++) {
+                        try { completeCbs[k](completeEvt); } catch (e) {}
+                    }
+                }
+            });
+        } else {
+            // 'error' or other: flush remaining synchronously then dispatch
+            var buf = _streamBuffers[data.messageId];
+            if (buf) {
+                if (buf.loopRunning) { buf.loopRunning = false; }
+                if (buf.semanticQueue.length > 0) {
+                    _emitStreamData(data.messageId, buf.semanticQueue.join(''));
+                }
+                delete _streamBuffers[data.messageId];
+            }
+            var cbs = listeners[channel];
+            if (cbs) {
+                for (var i = 0; i < cbs.length; i++) {
+                    try { cbs[i](data); } catch (e) {
+                        console.error('[VcpBridge] listener error on', channel, e);
+                    }
+                }
+            }
+        }
+    };
+
+    // Expose for external use (messageRenderer.js can check stream state)
+    window.__vcpStreamManager = {
+        isStreaming: function (messageId) {
+            return !!_streamBuffers[messageId];
+        },
+        getDisplayedText: function (messageId) {
+            var buf = _streamBuffers[messageId];
+            return buf ? buf.displayedText : null;
+        },
+        getFullText: function (messageId) {
+            var buf = _streamBuffers[messageId];
+            return buf ? buf.fullText : null;
         }
     };
 
@@ -275,6 +456,7 @@
     // ---- VCP Communication ----
     defInvoke('sendToVCP', 'send-to-vcp', 7);
     defOn('onVCPStreamEvent', 'vcp-stream-event');
+    defOn('onVCPStreamComplete', 'vcp-stream-complete');
     defOn('onVCPStreamChunk', 'vcp-stream-chunk');
     defInvoke('interruptVcpRequest', 'interrupt-vcp-request', 1);
 
@@ -462,4 +644,20 @@
     window.electronAPI = api;
 
     console.log('[VcpBridge] Electron API shim loaded (' + Object.keys(api).length + ' methods)');
+
+    // Mobile-friendly alert: show inline banner if native alert fails
+    var _origAlert = window.alert;
+    window.alert = function(msg) {
+        console.warn('[VcpBridge] alert:', msg);
+        try {
+            _origAlert.call(window, msg);
+        } catch(e) {
+            // Fallback: inject visible banner into page
+            var banner = document.createElement('div');
+            banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#ff3b30;color:#fff;padding:16px 20px;font-size:15px;text-align:center;font-family:system-ui;';
+            banner.textContent = msg;
+            banner.onclick = function(){ banner.remove(); };
+            (document.body || document.documentElement).appendChild(banner);
+        }
+    };
 })();

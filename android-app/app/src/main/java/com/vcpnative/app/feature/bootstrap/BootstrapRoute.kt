@@ -145,6 +145,14 @@ fun BootstrapRoute(
     val viewModel: BootstrapViewModel = viewModel(factory = BootstrapViewModel.factory(appContainer))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
+    LaunchedEffect(uiState.isLoading) {
+        if (!uiState.isLoading) {
+            // CompatDesktopSyncManager disabled: its disk→Room sync races with
+            // the local write path and deletes freshly-inserted messages.
+            // appContainer.compatDesktopSyncManager.start()
+        }
+    }
+
     LaunchedEffect(uiState.destination) {
         when (val destination = uiState.destination) {
             BootstrapDestination.Agents -> onOpenAgents()

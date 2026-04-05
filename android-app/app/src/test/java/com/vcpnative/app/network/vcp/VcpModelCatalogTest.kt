@@ -136,10 +136,14 @@ private class FakeSettingsRepository(
     override suspend fun saveConnection(
         serverUrl: String,
         apiKey: String,
+        vcpLogUrl: String,
+        vcpLogKey: String,
     ) {
         state.value = state.value.copy(
             vcpServerUrl = serverUrl,
             vcpApiKey = apiKey,
+            vcpLogUrl = vcpLogUrl,
+            vcpLogKey = vcpLogKey,
         )
     }
 
@@ -182,4 +186,14 @@ private class FakeSettingsRepository(
             lastTopicId = topicId,
         )
     }
+
+    override suspend fun saveFloatingWindowEnabled(enabled: Boolean) {}
+
+    override suspend fun saveOverlayApiConfig(apiUrl: String, apiKey: String, model: String) {}
+
+    override suspend fun applyCompatSettings(settings: AppSettings) {
+        state.value = settings
+    }
+
+    override suspend fun currentSettingsWithRecovery(): AppSettings = state.value
 }

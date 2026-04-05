@@ -20,6 +20,12 @@ class IpcDispatcher {
         suspend fun handle(args: JSONArray): Any?
     }
 
+    /**
+     * Callback for pushing events from Kotlin back to the WebView JS layer.
+     * Set by VcpModuleHost after the WebView is created.
+     */
+    var eventEmitter: ((channel: String, data: Any?) -> Unit)? = null
+
     private val handlers = mutableMapOf<String, Handler>()
 
     /**
@@ -38,8 +44,11 @@ class IpcDispatcher {
 
     /**
      * Dispatch an IPC message to its handler.
-     * @return The handler's result, or null if no handler is registered.
-     * @throws Exception if the handler throws.
+     *
+     * Errors are caught and returned as a JSON error object instead of propagating,
+     * matching VCPMobile's `Result<T, String>` Tauri command pattern.
+     *
+     * @return The handler's result, a JSON error object, or null if no handler.
      */
     suspend fun handle(channel: String, args: JSONArray): Any? {
         val handler = handlers[channel]
@@ -47,7 +56,15 @@ class IpcDispatcher {
                 android.util.Log.w("IpcDispatcher", "No handler for channel: $channel")
                 return null
             }
-        return handler.handle(args)
+        return try {
+            handler.handle(args)
+        } catch (e: Exception) {
+            BridgeLogger.e("IpcDispatcher", "Error in channel '$channel': ${e.message}")
+            JSONObject().apply {
+                put("error", true)
+                put("message", e.message ?: "Unknown error in $channel")
+            }
+        }
     }
 
     /**

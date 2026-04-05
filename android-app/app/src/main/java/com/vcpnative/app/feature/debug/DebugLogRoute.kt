@@ -51,19 +51,19 @@ fun DebugLogRoute(
     onNavigateBack: () -> Unit,
 ) {
     val context = LocalContext.current
-    val entryCount by BridgeLogger.entryCount.collectAsStateWithLifecycle()
+    val entriesVersion by BridgeLogger.entriesVersion.collectAsStateWithLifecycle()
     var enabledState by remember { mutableStateOf(BridgeLogger.enabled) }
     var levelFilter by remember { mutableStateOf<BridgeLogger.Level?>(null) }
     val listState = rememberLazyListState()
+    val allEntries = remember(entriesVersion) { BridgeLogger.entries() }
 
     // Auto-scroll to bottom when new entries arrive
-    LaunchedEffect(entryCount) {
-        if (entryCount > 0) {
-            listState.animateScrollToItem(entryCount - 1)
+    LaunchedEffect(entriesVersion) {
+        if (allEntries.isNotEmpty()) {
+            listState.animateScrollToItem(allEntries.lastIndex)
         }
     }
 
-    val allEntries = remember(entryCount) { BridgeLogger.entries() }
     val filtered = remember(allEntries, levelFilter) {
         if (levelFilter == null) allEntries
         else allEntries.filter { it.level == levelFilter }
@@ -136,7 +136,7 @@ fun DebugLogRoute(
                     )
                 }
                 Text(
-                    "$entryCount entries",
+                    "${allEntries.size} entries",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -173,7 +173,7 @@ fun DebugLogRoute(
                 contentPadding = PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                items(filtered, key = { it.timestamp }) { entry ->
+                items(filtered) { entry ->
                     val bgColor = when (entry.level) {
                         BridgeLogger.Level.ERROR -> Color(0x30FF0000)
                         BridgeLogger.Level.WARN -> Color(0x30FFAA00)
