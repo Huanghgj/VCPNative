@@ -1169,32 +1169,28 @@ var _pipeline={
   },
 
   // ── FULL_RENDER 管线♡ complete 时使用 ──
-  // 顺序协议：protect → 结构修正 → 恢复工具 → 特殊块转换 → 恢复代码块
+  // 顺序协议：protect 代码块 → 特殊块转换 → 恢复代码块
+  // 注意：不做 escapeMarkers！processSpecial 内部已有 esc()，
+  // 提前转义会导致 processSpecial 匹配「始」「末」内容时双重转义♡
   fullRender:function(text,role){
     if(!text)return '';
-    this._toolPlaceholderId=0;
     this._codePlaceholderId=0;
-    // 1. 安全转义
-    var t=this.escapeMarkers(text);
-    // 2. 保护工具结果和代码块
-    var toolProtect=this.protectToolResults(t);
-    t=toolProtect.text;
-    var codeProtect=this.protectCodeBlocks(t);
-    t=codeProtect.text;
-    // 3. 恢复工具结果（特殊块转换需要识别它们）
-    t=this.restore(t,toolProtect.map);
-    // 4. 特殊块转换（工具、思维链、日记等）
+    // 1. 保护代码块（防止 processSpecial 误匹配代码块内的特殊标记）
+    var codeProtect=this.protectCodeBlocks(text);
+    var t=codeProtect.text;
+    // 2. 特殊块转换（工具、思维链、日记等）
     t=processSpecial(t,role);
-    // 5. 恢复代码块
+    // 3. 恢复代码块
     t=this.restore(t,codeProtect.map);
     return t;
   },
 
   // ── STREAM_FAST 管线♡ 流式帧使用 ──
   // 只做最轻量的修正，不做特殊块转换（避免碎片状态下误匹配）
+  // 注意：不做 escapeMarkers，流式文本交给 md() 内部的 esc() 处理♡
   streamFast:function(text){
-    if(!text)return '';
-    return this.escapeMarkers(text);
+    if(!text)return text;
+    return text;
   }
 };
 
@@ -1768,17 +1764,18 @@ window.vcpChat={
     // Stable 区前进了♡ 把新确认的部分渲染并冻结
     if(nextCut>seg.stableCutoff){
       var stableText=fullText.slice(0,nextCut);
-      var processed=streamFastPreprocess(stableText);
-      // 用 marked 做完整 Markdown 渲染（这些内容已经闭合，不会有碎片问题）
-      var stHtml=md(processed);
+      // Stable 区用 renderContent（含 processSpecial）做完整渲染♡
+      // 因为 Stable 区只包含已闭合的结构，不会有碎片问题
+      var stHtml=renderContent(stableText,d.dataset.role);
       roots.stable.innerHTML=stHtml;
+      postProcessContent(roots.stable);
       seg.stableCutoff=nextCut;
       seg.stableHtml=stHtml;
     }
     // Tail 区：只处理分界线之后的尾部文本♡
+    // 用 md() 做轻量 Markdown 渲染（特殊标记可能未闭合，不做 processSpecial）
     var tailText=fullText.slice(seg.stableCutoff);
-    var tailProcessed=streamFastPreprocess(tailText);
-    var tailHtml=md(tailProcessed);
+    var tailHtml=md(tailText);
     // morphdom 增量 diff Tail 区♡ 只有这一小块在不停变动
     if(typeof morphdom!=='undefined'){
       try{
@@ -1805,8 +1802,9 @@ window.vcpChat={
           }
         });
       }catch(e){
-        // 不完整 HTML 导致的 morphdom 异常——流式中预期行为，等下一帧自动恢复♡
-        roots.tail.innerHTML=tailHtml;
+        // 不完整 HTML 导致的 morphdom 异常——流式中预期行为♡
+        // 降级为直接 innerHTML 替换，确保内容始终可见不会"停止输出"
+        try{roots.tail.innerHTML=tailHtml}catch(e2){}
       }
     }else{
       roots.tail.innerHTML=tailHtml;
