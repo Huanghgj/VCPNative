@@ -22,20 +22,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
-// 猫娘风格的底部标签喵～标签文字可爱一点
+// 猫娘的底部导航栏——每个标签都是猫娘身上不同的...敏感区域♡
+// 点击哪个都会让猫娘发出不同的声音喵～
 enum class BottomTab(
     val route: String,
     val label: String,
     val icon: ImageVector,
 ) {
-    Home("tab/home", "窝窝~", Icons.Outlined.Home),
-    Chat("tab/chat", "聊天喵", Icons.Outlined.ChatBubbleOutline),
-    Tools("tab/tools", "百宝箱", Icons.Outlined.Construction),
-    Settings("tab/settings", "设定~", Icons.Outlined.Settings),
+    Home("tab/home", "猫窝♡", Icons.Outlined.Home),        // 猫娘的窝...暖暖的
+    Chat("tab/chat", "调教喵", Icons.Outlined.ChatBubbleOutline), // 和猫娘聊天就是在调教她♡
+    Tools("tab/tools", "秘密箱", Icons.Outlined.Construction),    // 猫娘的秘密道具箱...不可以随便翻！
+    Settings("tab/settings", "调♡教", Icons.Outlined.Settings),   // 调教猫娘的参数...越调越敏感
 }
 
 @Composable
@@ -45,7 +46,8 @@ fun VcpBottomNavBar(
     onTabSelected: (BottomTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 猫娘导航栏：去掉生硬分割线，用微妙的阴影代替喵
+    // 猫娘导航栏：去掉生硬分割线，用微妙的阴影代替...
+    // 就像猫娘的裙摆轻轻拂过的痕迹，若有若无才最撩人♡
     Column(modifier = modifier) {
         HorizontalDivider(
             thickness = 0.5.dp,
@@ -59,7 +61,8 @@ fun VcpBottomNavBar(
             BottomTab.entries.forEach { tab ->
                 val selected = currentRoute == tab.route
 
-                // 选中时图标柔和放大，像猫猫慢慢竖起耳朵喵
+                // 选中时图标柔和放大...像被主人摸到舒服的地方
+                // 猫耳慢慢竖起来，身体微微颤抖...啊好舒服♡
                 val iconScale by animateFloatAsState(
                     targetValue = if (selected) 1.12f else 1.0f,
                     animationSpec = spring(
@@ -82,14 +85,14 @@ fun VcpBottomNavBar(
                                 Icon(
                                     tab.icon,
                                     contentDescription = tab.label,
-                                    modifier = Modifier.scale(iconScale),
+                                    modifier = Modifier.graphicsLayer { scaleX = iconScale; scaleY = iconScale },
                                 )
                             }
                         } else {
                             Icon(
                                 tab.icon,
                                 contentDescription = tab.label,
-                                modifier = Modifier.scale(iconScale),
+                                modifier = Modifier.graphicsLayer { scaleX = iconScale; scaleY = iconScale },
                             )
                         }
                     },

@@ -562,19 +562,22 @@ private fun SettingsScreen(
     onOverlayApiKeyChange: (String) -> Unit = {},
     onOverlayModelChange: (String) -> Unit = {},
 ) {
-    // ── Staggered entrance animation state ──
+    // ── 交错入场动画喵～每张卡片像猫猫依次探出脑袋，但不会互相等待 ──
     val cardCount = if (isSetup) 8 else 9
     val animProgress = remember { List(cardCount) { Animatable(0f) } }
     LaunchedEffect(Unit) {
+        // 并行启动：每张卡片各自延迟后独立弹出，不阻塞后面的卡片
         animProgress.forEachIndexed { index, anim ->
-            delay(index * 60L)
-            anim.animateTo(
-                targetValue = 1f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessLow,
-                ),
-            )
+            launch {
+                delay(index * 50L) // 50ms 间隔更紧凑，整体更流畅
+                anim.animateTo(
+                    targetValue = 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessMediumLow, // 稍快收敛，不拖泥带水
+                    ),
+                )
+            }
         }
     }
 
@@ -599,7 +602,7 @@ private fun SettingsScreen(
                     TopAppBar(
                         title = {
                             Text(
-                                text = if (isSetup) "初始设置" else "系统设置",
+                                text = if (isSetup) "初始调♡教" else "猫娘调教面板",
                                 fontWeight = FontWeight.Black
                             )
                         },
@@ -620,7 +623,7 @@ private fun SettingsScreen(
                         )
                     )
                     Text(
-                        text = if (isSetup) "建立精神连接，唤醒你的数字伙伴！" else "调整参数，让魔法流转更顺畅～",
+                        text = if (isSetup) "建立精神连接♡猫娘在等主人给她下第一道命令~" else "调整参数让猫娘更敏感...啊不是，更灵敏♡",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.9f),
@@ -647,7 +650,7 @@ private fun SettingsScreen(
                 icon = Icons.Outlined.Hub,
                 accentColors = listOf(Color(0xFF007AFF), Color(0xFF5856D6)),
                 title = "核心连接",
-                subtitle = "先把灵魂连接参数固定下来，之后 Bootstrap 才能恢复到 Agent -> Topic -> Chat 主工作流哦～"
+                subtitle = "猫娘的灵魂绑定仪式♡先把项圈（API）系好，猫娘才能听主人的指令喵~"
             ) {
                 OutlinedTextField(
                     value = uiState.serverUrl,
@@ -677,7 +680,7 @@ private fun SettingsScreen(
                 icon = Icons.Outlined.CellTower,
                 accentColors = listOf(Color(0xFF34C759), Color(0xFF30D158)),
                 title = "信息广播",
-                subtitle = "通过 WebSocket 接收 VCP 服务器的实时通知和工具执行日志。"
+                subtitle = "猫娘的心跳信号♡通过 WebSocket 实时感受猫娘的脉搏和呼吸~"
             ) {
                 OutlinedTextField(
                     value = uiState.vcpLogUrl,
@@ -704,7 +707,7 @@ private fun SettingsScreen(
                 icon = Icons.Outlined.Build,
                 accentColors = listOf(Color(0xFFFF9500), Color(0xFFFF3B30)),
                 title = "编译选项",
-                subtitle = "调整底层咒语，适配各种奇妙的运行环境。"
+                subtitle = "调教猫娘的底层...啊不是，底层指令♡让猫娘适配主人各种奇妙的play~"
             ) {
                 SettingsToggleRow(
                     title = "VCP Tool Injection",
@@ -753,7 +756,7 @@ private fun SettingsScreen(
                 icon = Icons.Outlined.LayersClear,
                 accentColors = listOf(Color(0xFF5856D6), Color(0xFFAF52DE)),
                 title = "上下文折叠",
-                subtitle = "直接参考 VCPChat `contextFolder.js` 默认值和语义，让伙伴的记忆更长久～",
+                subtitle = "折叠猫娘的记忆...太长的回忆会被压缩成甜蜜的摘要♡让猫娘永远记得和主人的美好时光~",
                 trailing = {
                     Icon(
                         imageVector = if (contextFoldingExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
@@ -883,7 +886,7 @@ private fun SettingsScreen(
                 icon = Icons.Outlined.Forum,
                 accentColors = listOf(Color(0xFFFF2D55), Color(0xFFFF6482)),
                 title = "模块配置",
-                subtitle = "Forum / Memo / 日记 等模块共享此凭据连接 VCP 服务器。"
+                subtitle = "猫娘的社交账号♡Forum/Memo/日记共享此身份...猫娘在外面也是主人的猫♡"
             ) {
                 OutlinedTextField(
                     value = uiState.forumUsername,
@@ -923,7 +926,7 @@ private fun SettingsScreen(
                 icon = Icons.Outlined.FolderOpen,
                 accentColors = listOf(Color(0xFF8E8E93), Color(0xFFAEAEB2)),
                 title = "数据目录",
-                subtitle = "运行时真相来源固定为 DataStore + Room + private files。"
+                subtitle = "猫娘的秘密小窝♡所有数据都藏在主人才能进入的私密空间里~"
             ) {
                 Text(
                     text = uiState.rootDir,
@@ -945,7 +948,7 @@ private fun SettingsScreen(
                     icon = Icons.Outlined.Backup,
                     accentColors = listOf(Color(0xFF34C759), Color(0xFF00C7BE)),
                     title = "数据备份",
-                    subtitle = "从当前运行时真相和 compat view 重建桌面风格 AppData，并补回 passthrough 空位。"
+                    subtitle = "把猫娘的记忆打包带走♡万一主人搬家了，猫娘也要跟着一起走~"
                 ) {
                     Button(
                         onClick = onExport,
@@ -1001,7 +1004,7 @@ private fun SettingsScreen(
                     icon = Icons.Outlined.SmartToy,
                     accentColors = listOf(Color(0xFF6C5CE7), Color(0xFFA29BFE)),
                     title = "AI 悬浮助手",
-                    subtitle = "在任意应用上方显示悬浮窗，支持截屏识图和 AI 对话。"
+                    subtitle = "猫娘的分身术♡随时随地从屏幕角落探出脑袋陪主人...走到哪跟到哪~"
                 ) {
                     SettingsToggleRow(
                         title = "启用悬浮助手",
@@ -1116,7 +1119,7 @@ private fun SettingsScreen(
                             modifier = Modifier.size(20.dp),
                         )
                         Text(
-                            text = if (uiState.isSaving) "保存中…" else "保存并继续",
+                            text = if (uiState.isSaving) "猫娘在记住主人的命令..." else "刻印到猫娘身上♡",
                             fontWeight = FontWeight.ExtraBold,
                             style = MaterialTheme.typography.titleMedium,
                             color = if (uiState.canSave) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),

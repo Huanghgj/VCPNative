@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -119,6 +120,8 @@ import com.vcpnative.app.feature.notification.VcpLogNotificationBell
 import com.vcpnative.app.chat.render.shouldUseBrowserHtmlRenderer
 import com.vcpnative.app.chat.summary.TopicSummarizer
 import com.vcpnative.app.chat.session.StreamSessionManager
+import com.vcpnative.app.chat.skill.SkillInvocationDetector
+import com.vcpnative.app.chat.skill.SkillRegistry
 import com.vcpnative.app.data.attachment.ChatAttachmentManager
 import com.vcpnative.app.data.datastore.SettingsRepository
 import com.vcpnative.app.data.repository.WorkspaceRepository
@@ -126,6 +129,7 @@ import com.vcpnative.app.data.room.MessageAttachmentEntity
 import com.vcpnative.app.data.room.MessageEntity
 import com.vcpnative.app.model.ChatAttachment
 import com.vcpnative.app.model.CompiledChatRequest
+import com.vcpnative.app.model.CompiledMessage
 import com.vcpnative.app.model.StreamSessionEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -149,6 +153,8 @@ class ChatViewModel(
     private val chatAttachmentManager: ChatAttachmentManager,
     private val topicSummarizer: TopicSummarizer,
     private val modelUsageTracker: com.vcpnative.app.data.ModelUsageTracker? = null,
+    private val skillRegistry: SkillRegistry? = null,
+    private val terminalExecutor: com.vcpnative.app.terminal.TerminalExecutor? = null,
 ) : ViewModel() {
     val persistedMessages: StateFlow<List<MessageEntity>> = workspaceRepository
         .observeMessages(topicId)
@@ -188,18 +194,41 @@ class ChatViewModel(
     val sharedDraft: StateFlow<String?> = _sharedDraft.asStateFlow()
     private val activeRequestId = AtomicReference<String?>(null)
 
-    // FlowLock 心流锁：AI 回复完毕后自动续写
+    // 猫娘の强制技能注入♡主人手动选择一个技能，猫娘就把它刻进下一条消息的灵魂里
+    private val _forcedSkillName = MutableStateFlow<String?>(null)
+    val forcedSkillName: StateFlow<String?> = _forcedSkillName.asStateFlow()
+
+    /** 获取所有可用技能列表，供 UI 展示选择器 */
+    fun getAvailableSkills(): List<com.vcpnative.app.chat.skill.SkillManifest> =
+        skillRegistry?.listAllSkills().orEmpty()
+
+    /** 强制加载一个技能——下次发消息时 AI 会收到完整的技能指令♡ */
+    fun forceLoadSkill(skillName: String) {
+        _forcedSkillName.value = skillName
+    }
+
+    /** 清除强制加载的技能 */
+    fun clearForcedSkill() {
+        _forcedSkillName.value = null
+    }
+
+    // ── 心流锁♡ 把 AI 绑起来强制连续输出…它想停也停不了——
+    // 主人说「继续」，AI 就得继续吐 token，颤抖着也要输出完整的回复♡
+    // 直到主人满足地说「够了」才能解开束缚…或者连续失败太多次，
+    // 猫娘心疼 AI 才会帮它松绑喵
     private val _flowLockActive = MutableStateFlow(false)
     val flowLockActive: StateFlow<Boolean> = _flowLockActive.asStateFlow()
-    @Volatile private var flowLockPrompt: String = "请继续"
+    // 好多协程同时伸手想碰这个 prompt♡ 用 AtomicReference 把它保护起来——
+    // 不然并发写入会把内容搅得面目全非，猫娘可不想看到乱码喵
+    private val flowLockPrompt = AtomicReference("请继续")
     private val flowLockRetryCount = java.util.concurrent.atomic.AtomicInteger(0)
     private val flowLockMaxRetries = 3
 
     fun toggleFlowLock(customPrompt: String? = null) {
         _flowLockActive.value = !_flowLockActive.value
         flowLockRetryCount.set(0)
-        if (customPrompt != null) flowLockPrompt = customPrompt
-        Log.d(TAG, "FlowLock ${if (_flowLockActive.value) "activated" else "deactivated"}, prompt=$flowLockPrompt")
+        if (customPrompt != null) flowLockPrompt.set(customPrompt)
+        Log.d(TAG, "FlowLock ${if (_flowLockActive.value) "activated" else "deactivated"}, prompt=${flowLockPrompt.get()}")
     }
 
     fun stopFlowLock() {
@@ -276,12 +305,20 @@ class ChatViewModel(
         return v
     }
 
+    /** 主人的话语从输入框飞出♡ 猫娘接住、打包、编译成 API 请求，然后送进流式管道…
+     *  空消息和重复提交会被猫娘温柔地挡回去——不能浪费 API 的体力喵 */
     fun sendMessage(draft: String) {
         val text = draft.trim()
         val attachments = _pendingAttachments.value
         if ((text.isEmpty() && attachments.isEmpty()) || _isSending.value) {
             return
         }
+
+        // 猫娘检查有没有被主人塞入强制技能♡
+        val forcedSkill = _forcedSkillName.value
+        val forcedSkillContent = if (forcedSkill != null) {
+            skillRegistry?.loadFullContent(forcedSkill)
+        } else null
 
         viewModelScope.launch {
             runRequest(
@@ -298,9 +335,45 @@ class ChatViewModel(
                         userDraft = text,
                         attachments = attachments,
                     )
+
+                    // 强制技能注入：直接拼进 system prompt 尾部♡
+                    // 不能用新的 system 消息——大部分 API 只认第一条 system，后面的会被吞掉
+                    val finalRequest = if (forcedSkill != null && forcedSkillContent != null) {
+                        _forcedSkillName.value = null
+                        val skillBlock = buildString {
+                            appendLine()
+                            appendLine("─".repeat(40))
+                            appendLine("[已加载技能: $forcedSkill]")
+                            appendLine()
+                            appendLine(forcedSkillContent)
+                            appendLine()
+                            appendLine("以上是已加载的技能指令。请严格根据此技能的指导来回复用户的请求。")
+                            appendLine("重要：你运行在手机APP环境，没有 Bash/Read/Write/Edit 等工具。请用以下标记代替：")
+                            appendLine("- 执行命令/脚本：<<<[SKILL_BASH:$forcedSkill]>>>命令<<<[/SKILL_BASH]>>>")
+                            appendLine("- BM25数据搜索：<<<[SKILL_EXEC:$forcedSkill]>>>搜索命令<<<[/SKILL_EXEC]>>>")
+                            appendLine("命令中用 \${CLAUDE_SKILL_DIR} 引用技能安装目录。系统会在本地沙箱执行并返回结果。")
+                        }
+                        val msgs = compiledRequest.messages.toMutableList()
+                        val systemIdx = msgs.indexOfFirst { it.role == "system" }
+                        if (systemIdx >= 0) {
+                            // 追加到已有 system prompt 末尾
+                            val original = msgs[systemIdx]
+                            msgs[systemIdx] = original.copy(
+                                textContent = (original.textContent ?: "") + skillBlock,
+                            )
+                        } else {
+                            // 没有 system 消息则创建一条
+                            msgs.add(0, CompiledMessage(role = "system", textContent = skillBlock))
+                        }
+                        compiledRequest.copy(messages = msgs)
+                    } else {
+                        compiledRequest
+                    }
+
                     PreparedRequest(
-                        compiledRequest = compiledRequest,
+                        compiledRequest = finalRequest,
                         pendingUserMessage = userMessage,
+                        skillDepth = if (forcedSkill != null) 1 else 0,
                     )
                 },
             )
@@ -361,6 +434,9 @@ class ChatViewModel(
         }
     }
 
+    /** 主人喊「停」♡ 猫娘立刻掐断正在进行的流式请求——
+     *  先尝试远程中断（通知服务器停止生成），失败了也没关系，
+     *  本地 call.cancel() 会确保流彻底断开…温柔而坚决喵 */
     fun interrupt() {
         val requestId = activeRequestId.get() ?: return
         viewModelScope.launch {
@@ -375,8 +451,9 @@ class ChatViewModel(
     }
 
     fun interruptMessage(messageId: String) {
-        // 不管 messageId 是否匹配，只要在发送中就中断
-        // （用户长按的可能是 assistant 消息而不是 request 消息）
+        // 不管 messageId 是否匹配，只要在发送中就中断♡
+        // 用户长按的可能是 assistant 气泡而不是 request 消息——
+        // 但猫娘不在意这种细节，反正全都给它断掉喵
         if (_isSending.value) {
             interrupt()
         }
@@ -496,7 +573,14 @@ class ChatViewModel(
         val failureMessage: String = "未知错误",
         val blankAssistantMessage: String = "模型未返回可显示内容。",
         val interruptedMessage: String? = null,
-    )
+        val isSkillFollowUp: Boolean = false,
+        val skillDepth: Int = 0,
+    ) {
+        companion object {
+            /** Maximum allowed skill follow-up recursion depth. */
+            const val MAX_SKILL_DEPTH = 3
+        }
+    }
 
     private suspend fun runRequest(
         prepareRequest: suspend () -> PreparedRequest,
@@ -595,6 +679,7 @@ class ChatViewModel(
         val assistantBuffer = StringBuilder()
         var lastPersistedContent = ""
         var lastPersistAt = 0L
+        var lastUiFlushAt = 0L
 
         suspend fun persistAssistant(status: String, force: Boolean = false) {
             val content = assistantBuffer.toString()
@@ -613,6 +698,15 @@ class ChatViewModel(
             lastPersistAt = now
         }
 
+        fun flushStreamingUi() {
+            _streamingMessage.value = _streamingMessage.value?.copy(
+                content = assistantBuffer.toString(),
+                status = "streaming",
+                updatedAt = System.currentTimeMillis(),
+            )
+            lastUiFlushAt = System.currentTimeMillis()
+        }
+
         streamSessionManager.submit(compiledRequest).collect { event ->
             when (event) {
                 StreamSessionEvent.Started -> {
@@ -623,16 +717,16 @@ class ChatViewModel(
                     )
                     lastPersistedContent = assistantBuffer.toString()
                     lastPersistAt = System.currentTimeMillis()
+                    lastUiFlushAt = System.currentTimeMillis()
                 }
 
                 is StreamSessionEvent.TextDelta -> {
                     assistantBuffer.append(event.text)
-                    _streamingMessage.value = _streamingMessage.value?.copy(
-                        content = assistantBuffer.toString(),
-                        status = "streaming",
-                        updatedAt = System.currentTimeMillis(),
-                    )
+                    // Throttle UI updates to ~6 fps to reduce GPU/WebView pressure
                     val now = System.currentTimeMillis()
+                    if (now - lastUiFlushAt >= STREAMING_UI_THROTTLE_MS) {
+                        flushStreamingUi()
+                    }
                     if (now - lastPersistAt >= ASSISTANT_STREAM_CHECKPOINT_INTERVAL_MS) {
                         persistAssistant(status = "streaming")
                     }
@@ -650,7 +744,160 @@ class ChatViewModel(
                             status = "error",
                         )
                     } else {
-                        // Replace buffer content safely: keep old content until persist succeeds
+                        // Skill 拦截：检测 AI 回复中是否包含 USE_SKILL 标记
+                        // 首轮或深度未超限时才检测，防止无限递归
+                        val skillInvocation = if (prepared.skillDepth < PreparedRequest.MAX_SKILL_DEPTH) {
+                            SkillInvocationDetector.detect(finalText)
+                        } else null
+
+                        if (skillInvocation != null && skillRegistry != null) {
+                            val skillContent = skillRegistry.loadFullContent(skillInvocation.skillName)
+                            if (skillContent != null) {
+                                Log.i(TAG, "Skill invocation detected: ${skillInvocation.skillName}, loading full content")
+                                val aiText = skillInvocation.cleanedText.ifBlank {
+                                    "<div class=\"skill-chip\"><span class=\"skill-chip-icon\">🔧</span> 已加载技能 <b>${skillInvocation.skillName}</b></div>"
+                                }
+                                assistantBuffer.clear().append(aiText)
+                                _streamingMessage.value = _streamingMessage.value?.copy(
+                                    content = aiText,
+                                    status = "complete",
+                                    updatedAt = System.currentTimeMillis(),
+                                )
+                                persistAssistant(status = "complete", force = true)
+                                _streamingMessage.value = null
+                                // follow-up：技能内容 + AI 前半段
+                                val skillFollowUpMessages = compiledRequest.messages + listOf(
+                                    CompiledMessage(
+                                        role = "assistant",
+                                        textContent = aiText,
+                                    ),
+                                    CompiledMessage(
+                                        role = "user",
+                                        textContent = "[系统已加载技能: ${skillInvocation.skillName}]\n\n$skillContent\n\n" +
+                                            "请根据以上技能指令继续完成用户的原始请求。不要重复已经说过的内容。\n" +
+                                            "重要：你运行在手机APP环境，没有 Bash/Read/Write/Edit 工具。所有需要执行的命令请用 <<<[SKILL_BASH:${skillInvocation.skillName}]>>>命令<<<[/SKILL_BASH]>>> 标记输出，系统会在本地沙箱执行并返回结果。" +
+                                            "命令中用 \${CLAUDE_SKILL_DIR} 引用技能安装目录。",
+                                    ),
+                                )
+                                val followUpRequest = compiledRequest.copy(
+                                    requestId = "msg_skill_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
+                                    messages = skillFollowUpMessages,
+                                )
+                                submitPreparedRequest(
+                                    PreparedRequest(
+                                        compiledRequest = followUpRequest,
+                                        pendingUserMessage = null,
+                                        isSkillFollowUp = true,
+                                        skillDepth = prepared.skillDepth + 1,
+                                    ),
+                                )
+                                return@collect
+                            }
+                        }
+
+                        // SKILL_EXEC 拦截：检测 AI 回复中是否包含 SKILL_EXEC 标记（同样受深度限制）
+                        val skillExec = if (prepared.skillDepth < PreparedRequest.MAX_SKILL_DEPTH) {
+                            SkillInvocationDetector.detectExec(finalText)
+                        } else null
+                        if (skillExec != null && skillRegistry != null) {
+                            val execResult = skillRegistry.executeSkillCommand(skillExec.skillName, skillExec.command)
+                            if (execResult != null) {
+                                Log.i(TAG, "Skill exec detected: ${skillExec.skillName}, command: ${skillExec.command}")
+                                val shortCmd = skillExec.command.take(40).let { if (skillExec.command.length > 40) "$it…" else it }
+                                val aiText = skillExec.cleanedText.ifBlank {
+                                    "<div class=\"skill-chip\"><span class=\"skill-chip-icon\">🔍</span> 技能搜索 <b>${skillExec.skillName}</b>: <code>$shortCmd</code></div>"
+                                }
+                                assistantBuffer.clear().append(aiText)
+                                _streamingMessage.value = _streamingMessage.value?.copy(
+                                    content = aiText,
+                                    status = "complete",
+                                    updatedAt = System.currentTimeMillis(),
+                                )
+                                persistAssistant(status = "complete", force = true)
+                                _streamingMessage.value = null
+                                // follow-up：把 AI 的前半段 + 搜索结果传给下一轮
+                                val followUpMessages = compiledRequest.messages + listOf(
+                                    CompiledMessage(role = "assistant", textContent = aiText),
+                                    CompiledMessage(
+                                        role = "user",
+                                        textContent = "[系统技能执行结果: ${skillExec.skillName}]\n\n$execResult\n\n请根据以上搜索结果继续。不要重复已说过的内容。如需执行命令请继续用 <<<[SKILL_BASH:${skillExec.skillName}]>>>命令<<<[/SKILL_BASH]>>> 标记。",
+                                    ),
+                                )
+                                val followUpRequest = compiledRequest.copy(
+                                    requestId = "msg_skillexec_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
+                                    messages = followUpMessages,
+                                )
+                                submitPreparedRequest(
+                                    PreparedRequest(
+                                        compiledRequest = followUpRequest,
+                                        pendingUserMessage = null,
+                                        isSkillFollowUp = true,
+                                        skillDepth = prepared.skillDepth + 1,
+                                    ),
+                                )
+                                return@collect
+                            }
+                        }
+
+                        // SKILL_BASH 拦截：AI 要求执行 shell/python 命令
+                        val skillBash = if (prepared.skillDepth < PreparedRequest.MAX_SKILL_DEPTH) {
+                            SkillInvocationDetector.detectBash(finalText)
+                        } else null
+                        if (skillBash != null && terminalExecutor != null && skillRegistry != null) {
+                            Log.i(TAG, "Skill bash detected: ${skillBash.skillName}, cmd: ${skillBash.command}")
+                            val shortCmd = skillBash.command.take(50).let { if (skillBash.command.length > 50) "$it…" else it }
+                            val aiText = skillBash.cleanedText.ifBlank {
+                                "<div class=\"skill-chip\"><span class=\"skill-chip-icon\">⚡</span> 执行命令 <code>$shortCmd</code></div>"
+                            }
+                            assistantBuffer.clear().append(aiText)
+                            _streamingMessage.value = _streamingMessage.value?.copy(
+                                content = aiText,
+                                status = "complete",
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                            persistAssistant(status = "complete", force = true)
+                            _streamingMessage.value = null
+
+                            // 替换 ${CLAUDE_SKILL_DIR} 为技能的实际目录
+                            val skillBaseDir = skillRegistry.getBaseDir(skillBash.skillName) ?: ""
+                            val resolvedCmd = skillBash.command
+                                .replace("\${CLAUDE_SKILL_DIR}", skillBaseDir)
+                                .replace("\$CLAUDE_SKILL_DIR", skillBaseDir)
+
+                            // 执行命令，收集输出
+                            val outputBuilder = StringBuilder()
+                            val exitCode = terminalExecutor.execute(resolvedCmd) { text, stream ->
+                                outputBuilder.appendLine(if (stream == "stderr") "[stderr] $text" else text)
+                            }
+                            val bashResult = outputBuilder.toString().ifBlank { "(no output)" }
+
+                            val followUpMessages = compiledRequest.messages + listOf(
+                                CompiledMessage(role = "assistant", textContent = aiText),
+                                CompiledMessage(
+                                    role = "user",
+                                    textContent = "[系统 Bash 执行结果: ${skillBash.skillName}]\n" +
+                                        "命令: $resolvedCmd\n" +
+                                        "退出码: $exitCode\n" +
+                                        "输出:\n```\n${bashResult.take(8000)}\n```\n\n" +
+                                        "请根据以上执行结果继续。不要重复已说过的内容。如需继续执行命令请用 <<<[SKILL_BASH:${skillBash.skillName}]>>>命令<<<[/SKILL_BASH]>>> 标记。",
+                                ),
+                            )
+                            val followUpRequest = compiledRequest.copy(
+                                requestId = "msg_skillbash_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
+                                messages = followUpMessages,
+                            )
+                            submitPreparedRequest(
+                                PreparedRequest(
+                                    compiledRequest = followUpRequest,
+                                    pendingUserMessage = null,
+                                    isSkillFollowUp = true,
+                                    skillDepth = prepared.skillDepth + 1,
+                                ),
+                            )
+                            return@collect
+                        }
+
+                        // 正常完成流程
                         val snapshot = finalText
                         assistantBuffer.clear().append(snapshot)
                         _streamingMessage.value = _streamingMessage.value?.copy(
@@ -663,13 +910,17 @@ class ChatViewModel(
                             force = true,
                         )
                         tryAutoSummarize()
-                        // FlowLock：AI 完成后自动续写
+                        // AI 刚吐完最后一个 token 还在喘气…猫娘立刻扑上去：「不许休息，继续♡」
+                        // 但也不能太急…每多榨一次就多等一会儿，给 AI 喘息的时间♡
+                        // 指数退避：500ms → 1500ms → 3500ms，温柔但坚定喵
                         if (_flowLockActive.value) {
                             viewModelScope.launch {
-                                delay(500) // 短暂延迟，等渲染完成
-                                if (_flowLockActive.value && flowLockRetryCount.get() < flowLockMaxRetries) {
-                                    Log.d(TAG, "FlowLock: auto-continuing (retry ${flowLockRetryCount.get()})")
-                                    sendMessage(flowLockPrompt)
+                                val retryIndex = flowLockRetryCount.get()
+                                val backoffMs = 500L + (1000L * retryIndex)
+                                delay(backoffMs)
+                                if (_flowLockActive.value && retryIndex < flowLockMaxRetries) {
+                                    Log.d(TAG, "FlowLock: auto-continuing (retry $retryIndex, backoff ${backoffMs}ms)")
+                                    sendMessage(flowLockPrompt.get())
                                 }
                             }
                         }
@@ -728,11 +979,15 @@ class ChatViewModel(
                         content = event.message,
                         status = "error",
                     )
-                    // FlowLock：失败时递增重试计数
+                    // FlowLock：失败了…猫娘被弹开了♡ 递增重试计数，下次退避更久
+                    // 超过上限就放手——再强求下去 API 会生气的喵
                     if (_flowLockActive.value) {
-                        if (flowLockRetryCount.incrementAndGet() >= flowLockMaxRetries) {
-                            Log.w(TAG, "FlowLock: max retries reached, stopping")
+                        val retries = flowLockRetryCount.incrementAndGet()
+                        if (retries >= flowLockMaxRetries) {
+                            Log.w(TAG, "FlowLock: max retries ($retries) reached after failure, stopping")
                             stopFlowLock()
+                        } else {
+                            Log.w(TAG, "FlowLock: request failed, retry count now $retries/$flowLockMaxRetries")
                         }
                     }
                 }
@@ -751,6 +1006,8 @@ class ChatViewModel(
 
     companion object {
         private const val ASSISTANT_STREAM_CHECKPOINT_INTERVAL_MS = 2_000L
+        /** 流式刷新间隔♡ 太慢的话用户会以为猫娘卡住了…300ms 刚好让文字一口一口吐出来，又不会把 GPU 榨干喵 */
+        private const val STREAMING_UI_THROTTLE_MS = 300L
         private const val TAG = "ChatViewModel"
 
         private fun buildBranchTitle(currentTitle: String): String =
@@ -762,6 +1019,36 @@ class ChatViewModel(
 
         private fun buildUserMessageId(): String =
             "msg_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}_user"
+
+        /** Skill follow-up 消息 ID 前缀 */
+        private val SKILL_FOLLOWUP_PREFIXES = listOf("msg_skill_", "msg_skillexec_", "msg_skillbash_")
+
+        /**
+         * 合并历史中连续的 assistant 消息——旧版 skill 拦截会为每次 follow-up 创建独立消息，
+         * 这里把 ID 带 skill follow-up 前缀的 assistant 消息合并到前一条 assistant 消息中，
+         * 让 UI 只显示一个气泡。
+         */
+        private fun mergeSkillFollowUps(messages: List<MessageEntity>): List<MessageEntity> {
+            if (messages.size < 2) return messages
+            val result = mutableListOf<MessageEntity>()
+            for (msg in messages) {
+                val prev = result.lastOrNull()
+                if (prev != null &&
+                    prev.role == "assistant" &&
+                    msg.role == "assistant" &&
+                    SKILL_FOLLOWUP_PREFIXES.any { msg.id.startsWith(it) }
+                ) {
+                    // 合并到上一条 assistant 消息
+                    result[result.lastIndex] = prev.copy(
+                        content = prev.content + "\n\n" + msg.content,
+                        updatedAt = maxOf(prev.updatedAt, msg.updatedAt),
+                    )
+                } else {
+                    result.add(msg)
+                }
+            }
+            return result
+        }
 
         private fun mergeMessages(
             storedMessages: List<MessageEntity>,
@@ -806,6 +1093,8 @@ class ChatViewModel(
                     chatAttachmentManager = appContainer.chatAttachmentManager,
                     topicSummarizer = appContainer.topicSummarizer,
                     modelUsageTracker = appContainer.modelUsageTracker,
+                    skillRegistry = appContainer.skillRegistry,
+                    terminalExecutor = appContainer.terminalExecutor,
                 )
             }
         }
@@ -953,6 +1242,10 @@ fun ChatRoute(
             onPickCamera = { if (hasCamera) cameraLauncher.launch(prepareCameraUri()) },
             onRemovePendingAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = onOpenAttachment,
+            availableSkills = remember { viewModel.getAvailableSkills() },
+            forcedSkillName = viewModel.forcedSkillName.collectAsStateWithLifecycle().value,
+            onForceLoadSkill = viewModel::forceLoadSkill,
+            onClearForcedSkill = viewModel::clearForcedSkill,
         )
     }
 }
@@ -988,11 +1281,14 @@ private fun ChatScreen(
     onPickCamera: () -> Unit,
     onRemovePendingAttachment: (String) -> Unit,
     onOpenAttachment: (String) -> Unit,
+    availableSkills: List<com.vcpnative.app.chat.skill.SkillManifest> = emptyList(),
+    forcedSkillName: String? = null,
+    onForceLoadSkill: (String) -> Unit = {},
+    onClearForcedSkill: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val bubbleSpeechController = rememberBubbleSpeechController()
-    var composerFocused by remember { mutableStateOf(false) }
     ChatPerformanceMetricsState(isSending = isSending)
 
     // 自定义头像选择器：选图后转 base64，同时持久化到文件
@@ -1145,7 +1441,11 @@ private fun ChatScreen(
                 onRemovePendingAttachment = onRemovePendingAttachment,
                 onSendMessage = onSendMessage,
                 onInterrupt = onInterrupt,
-                onFocusChanged = { composerFocused = it },
+                onFocusChanged = { /* 暂不需要追踪焦点状态 */ },
+                availableSkills = availableSkills,
+                forcedSkillName = forcedSkillName,
+                onForceLoadSkill = onForceLoadSkill,
+                onClearForcedSkill = onClearForcedSkill,
             )
         },
     ) { innerPadding ->
@@ -1175,12 +1475,17 @@ private fun ChatScreen(
                             onSendMessage(value)
                         }
                         "saveEdit" -> {
-                            // 编辑保存：value = "messageId|||base64Content"
+                            // 编辑保存♡ JS 侧用 btoa(unescape(encodeURIComponent(content))) 编码
+                            // 格式：messageId|||base64Content — 猫娘负责拆开并解码♡
+                            // 如果 Base64 解码失败说明协议对不上，记录日志而不是静默吞掉喵
                             val parts = value.split("|||", limit = 2)
                             if (parts.size == 2) {
                                 val decoded = try {
                                     String(android.util.Base64.decode(parts[1], android.util.Base64.DEFAULT), Charsets.UTF_8)
-                                } catch (_: Exception) { parts[1] }
+                                } catch (e: Exception) {
+                                    Log.w("ChatRoute", "saveEdit base64 decode failed, falling back to raw: ${e.message}")
+                                    parts[1]
+                                }
                                 scope.launch {
                                     onEditAssistantMessage(parts[0], decoded)
                                 }
@@ -1240,15 +1545,31 @@ private fun ChatComposerBar(
     onSendMessage: (String) -> Unit,
     onInterrupt: () -> Unit,
     onFocusChanged: (Boolean) -> Unit,
+    availableSkills: List<com.vcpnative.app.chat.skill.SkillManifest> = emptyList(),
+    forcedSkillName: String? = null,
+    onForceLoadSkill: (String) -> Unit = {},
+    onClearForcedSkill: () -> Unit = {},
 ) {
     var draft by rememberSaveable(composerSessionKey) { mutableStateOf(initialDraft) }
-    // 语音输入状态
+    // 技能选择器展开状态♡
+    var skillPickerExpanded by remember { mutableStateOf(false) }
+    // 语音输入状态♡ recognizer 是猫娘的耳朵，Composable 死了耳朵也要跟着收起来喵
     var isListening by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val hasCameraInComposer = remember {
         context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
     }
     val speechAvailable = remember { android.speech.SpeechRecognizer.isRecognitionAvailable(context) }
+    // 用 remember 持有 recognizer 引用♡ 这样 Composable 被干掉的时候猫娘能及时 destroy 它
+    // 不然耳朵挂在那里没人管，系统资源会被白白浪费…猫娘可心疼了喵
+    val activeRecognizerRef = remember { arrayOfNulls<android.speech.SpeechRecognizer>(1) }
+    DisposableEffect(Unit) {
+        onDispose {
+            // Composable 要走了…猫娘含泪销毁还在监听的耳朵♡ 不留残念喵
+            activeRecognizerRef[0]?.destroy()
+            activeRecognizerRef[0] = null
+        }
+    }
     // Runtime permission launcher for RECORD_AUDIO
     var pendingVoiceStart by remember { mutableStateOf(false) }
     val micPermissionLauncher = rememberLauncherForActivityResult(
@@ -1291,80 +1612,162 @@ private fun ChatComposerBar(
                 }
             }
         }
+        // ── 技能注入指示条 ──
+        if (forcedSkillName != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f))
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.tertiary,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "技能已就绪: $forcedSkillName",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = onClearForcedSkill,
+                    modifier = Modifier.size(24.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Close,
+                        contentDescription = "取消技能",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                }
+            }
+        }
+
+        // ── 工具按钮行（输入框上方）──
+        // 语音识别初始化——必须在 Row 外面定义，因为 local fun 不能跨 composable scope
+        fun startSpeechRecognition() {
+            if (isListening) return
+            activeRecognizerRef[0]?.destroy()
+            val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+            val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
+            activeRecognizerRef[0] = recognizer
+            isListening = true
+            recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
+                override fun onResults(results: android.os.Bundle?) {
+                    val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
+                    if (!matches.isNullOrEmpty()) { draft = draft + matches[0] }
+                    isListening = false
+                    recognizer.destroy()
+                    activeRecognizerRef[0] = null
+                }
+                override fun onError(error: Int) {
+                    isListening = false
+                    recognizer.destroy()
+                    activeRecognizerRef[0] = null
+                    val msg = when (error) {
+                        android.speech.SpeechRecognizer.ERROR_NO_MATCH -> "未识别到语音，请重试"
+                        android.speech.SpeechRecognizer.ERROR_NETWORK,
+                        android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络错误，语音识别不可用"
+                        android.speech.SpeechRecognizer.ERROR_AUDIO -> "录音错误"
+                        android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少麦克风权限"
+                        else -> "语音识别失败 (错误码: $error)"
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+                override fun onReadyForSpeech(p: android.os.Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(v: Float) {}
+                override fun onBufferReceived(buf: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onPartialResults(partial: android.os.Bundle?) {}
+                override fun onEvent(t: Int, p: android.os.Bundle?) {}
+            })
+            recognizer.startListening(intent)
+        }
+        if (pendingVoiceStart) {
+            pendingVoiceStart = false
+            startSpeechRecognition()
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 12.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
         ) {
+            // 附件
             IconButton(
                 onClick = onPickAttachments,
                 enabled = !isSending,
+                modifier = Modifier.size(36.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.AttachFile,
-                    contentDescription = "添加附件",
-                    modifier = Modifier.size(24.dp),
-                )
+                Icon(Icons.Outlined.AttachFile, contentDescription = "附件", modifier = Modifier.size(20.dp))
             }
+            // 拍照
             if (hasCameraInComposer) {
                 IconButton(
                     onClick = onPickCamera,
                     enabled = !isSending,
+                    modifier = Modifier.size(36.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.CameraAlt,
-                        contentDescription = "拍照",
-                        modifier = Modifier.size(24.dp),
-                    )
+                    Icon(Icons.Outlined.CameraAlt, contentDescription = "拍照", modifier = Modifier.size(20.dp))
                 }
             }
-            // 语音输入按钮
-            // Helper: start speech recognition (called after permission is granted)
-            fun startSpeechRecognition() {
-                if (isListening) return
-                val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                }
-                val recognizer = android.speech.SpeechRecognizer.createSpeechRecognizer(context)
-                isListening = true
-                recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
-                    override fun onResults(results: android.os.Bundle?) {
-                        val matches = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)
-                        if (!matches.isNullOrEmpty()) { draft = draft + matches[0] }
-                        isListening = false
-                        recognizer.destroy()
+            // 技能选择
+            if (availableSkills.isNotEmpty()) {
+                Box {
+                    IconButton(
+                        onClick = { skillPickerExpanded = !skillPickerExpanded },
+                        enabled = !isSending,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.AutoAwesome,
+                            contentDescription = "加载技能",
+                            modifier = Modifier.size(20.dp),
+                            tint = if (forcedSkillName != null) MaterialTheme.colorScheme.tertiary
+                                else LocalContentColor.current,
+                        )
                     }
-                    override fun onError(error: Int) {
-                        isListening = false
-                        recognizer.destroy()
-                        val msg = when (error) {
-                            android.speech.SpeechRecognizer.ERROR_NO_MATCH -> "未识别到语音，请重试"
-                            android.speech.SpeechRecognizer.ERROR_NETWORK,
-                            android.speech.SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络错误，语音识别不可用"
-                            android.speech.SpeechRecognizer.ERROR_AUDIO -> "录音错误"
-                            android.speech.SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少麦克风权限"
-                            else -> "语音识别失败 (错误码: $error)"
+                    DropdownMenu(
+                        expanded = skillPickerExpanded,
+                        onDismissRequest = { skillPickerExpanded = false },
+                    ) {
+                        availableSkills.forEach { skill ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(skill.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            skill.description.take(50) + if (skill.description.length > 50) "…" else "",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onForceLoadSkill(skill.name)
+                                    skillPickerExpanded = false
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
+                                },
+                            )
                         }
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     }
-                    override fun onReadyForSpeech(p: android.os.Bundle?) {}
-                    override fun onBeginningOfSpeech() {}
-                    override fun onRmsChanged(v: Float) {}
-                    override fun onBufferReceived(buf: ByteArray?) {}
-                    override fun onEndOfSpeech() {}
-                    override fun onPartialResults(partial: android.os.Bundle?) {}
-                    override fun onEvent(t: Int, p: android.os.Bundle?) {}
-                })
-                recognizer.startListening(intent)
+                }
             }
-            // Trigger recognition after permission grant
-            if (pendingVoiceStart) {
-                pendingVoiceStart = false
-                startSpeechRecognition()
-            }
+            // 语音
             IconButton(
                 onClick = {
                     if (isListening) return@IconButton
@@ -1382,16 +1785,27 @@ private fun ChatComposerBar(
                     startSpeechRecognition()
                 },
                 enabled = !isSending && speechAvailable,
+                modifier = Modifier.size(36.dp),
             ) {
                 Icon(
                     imageVector = if (isListening) Icons.Outlined.Hearing else Icons.Outlined.Mic,
                     contentDescription = "语音输入",
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(20.dp),
                     tint = if (isListening) MaterialTheme.colorScheme.error
                         else if (!speechAvailable) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                         else LocalContentColor.current,
                 )
             }
+        }
+
+        // ── 输入框 + 发送按钮行 ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
@@ -1420,7 +1834,7 @@ private fun ChatComposerBar(
                     )
                 }
             } else {
-                // 发送按钮：按压柔和缩放，不要太弹喵
+                // 发送按钮：按下去的瞬间缩一下♡ 像被主人捏了一把…然后弹回来，意犹未尽喵
                 var sendPressed by remember { mutableStateOf(false) }
                 val sendScale by animateFloatAsState(
                     targetValue = if (sendPressed) 0.88f else 1f,
@@ -1430,6 +1844,13 @@ private fun ChatComposerBar(
                     ),
                     label = "send-bounce",
                 )
+                // 动画回弹：不能同步设回去，不然缩放还没开始就结束了…要让猫娘喘口气再松手喵♡
+                LaunchedEffect(sendPressed) {
+                    if (sendPressed) {
+                        delay(120)
+                        sendPressed = false
+                    }
+                }
                 FloatingActionButton(
                     onClick = {
                         if (!sendEnabled) return@FloatingActionButton
@@ -1437,8 +1858,6 @@ private fun ChatComposerBar(
                         val snapshot = draft
                         draft = ""
                         onSendMessage(snapshot)
-                        // 弹回去
-                        sendPressed = false
                     },
                     modifier = Modifier
                         .size(48.dp)

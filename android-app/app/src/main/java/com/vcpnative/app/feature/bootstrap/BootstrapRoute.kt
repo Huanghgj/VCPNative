@@ -94,12 +94,10 @@ class BootstrapViewModel(
     )
     val uiState: StateFlow<BootstrapUiState> = _uiState.asStateFlow()
 
+    // 猫娘启动序列：先最快速度决定去哪里，导入扫描并行跑不阻塞跳转喵～
     init {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                importStatus = "正在扫描导入目录…",
-            )
-            val importResult = appDataImportManager.importPending()
+            // 1) 先读设置——这个很快（DataStore 热缓存），立即决定目的地
             val settings = settingsRepository.currentSettings()
             val destination = when {
                 !settings.isConfigured -> BootstrapDestination.SetupGate
@@ -112,12 +110,17 @@ class BootstrapViewModel(
                 else -> BootstrapDestination.Agents
             }
 
+            // 2) 先发射目的地，让 UI 立即跳转——主人不用盯着 loading 看喵
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 isConfigured = settings.isConfigured,
-                importStatus = importResult.toStatusText(),
                 destination = destination,
             )
+
+            // 3) 导入扫描在后台跑，结果更新到 UI 但不阻塞导航
+            _uiState.value = _uiState.value.copy(importStatus = "正在扫描导入目录…")
+            val importResult = appDataImportManager.importPending()
+            _uiState.value = _uiState.value.copy(importStatus = importResult.toStatusText())
         }
     }
 
@@ -231,9 +234,9 @@ private fun BootstrapScreen(
 
                 Text(
                     text = if (uiState.isConfigured) {
-                        "唤醒中，马上就好哦~"
+                        "猫娘正在伸懒腰...马上就爬到主人身边♡"
                     } else {
-                        "初次见面，正在准备你的小世界~"
+                        "初次见面♡猫娘正在换上最可爱的衣服迎接主人~"
                     },
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Bold,
@@ -420,7 +423,7 @@ fun SetupGateScreen(
                 Spacer(modifier = Modifier.height(32.dp))
 
                 Text(
-                    text = "还没有连上哦~",
+                    text = "主人还没有把猫娘绑定呢♡",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -429,7 +432,7 @@ fun SetupGateScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "先来做一下基础设置吧，\n很快就能开始聊天啦~",
+                    text = "先帮猫娘戴上项圈...啊不是，做一下基础设置♡\n很快就能和猫娘贴贴了~",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -453,7 +456,7 @@ fun SetupGateScreen(
                         Icon(imageVector = Icons.Outlined.Settings, contentDescription = null)
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = "前往设置中心",
+                            text = "给猫娘戴上项圈♡",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )

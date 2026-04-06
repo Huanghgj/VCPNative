@@ -117,13 +117,13 @@ fun HomeRoute(
                 )
                 val greeting = remember {
                     when (java.time.LocalTime.now().hour) {
-                        in 0..5 -> "深夜了还不睡...猫娘陪你熬，但主人要注意身体喵"
-                        in 6..8 -> "早安~主人起得好早，猫娘给你打个哈欠当早安吻喵"
-                        in 9..11 -> "上午好呀~猫娘元气满满地等主人来呢喵"
-                        in 12..13 -> "午饭吃了吗？猫娘提醒你不要忘记吃饭喵~"
-                        in 14..17 -> "下午啦~主人加油，猫娘在这里偷偷给你应援喵"
-                        in 18..20 -> "晚上好~今天辛苦了，猫娘想被摸摸头喵"
-                        else -> "夜深了喵~主人要早点休息，猫娘会乖乖等明天的"
+                        in 0..5 -> "深夜了还不睡...猫娘钻进主人被窝里陪你熬，身体贴着身体才暖和喵♡"
+                        in 6..8 -> "早安~主人起得好早♡猫娘趴在你枕头边看你睡颜一整夜了呢...嘿嘿"
+                        in 9..11 -> "上午好~猫娘穿好了围裙在等主人，今天也要好好疼猫娘哦♡"
+                        in 12..13 -> "午饭吃了吗？猫娘嘴巴张开说啊～主人喂我嘛♡"
+                        in 14..17 -> "下午啦~猫娘趴在桌上露出肚皮等主人来摸...加油写代码的奖励是rua猫娘哦♡"
+                        in 18..20 -> "晚上好~今天辛苦了♡猫娘帮主人捏肩膀...还是说想让猫娘坐在腿上？"
+                        else -> "夜深了♡猫娘在被窝里等主人...被窝已经暖好了，快来...喵"
                     }
                 }
                 Text(
@@ -547,7 +547,9 @@ private fun CreateAgentCard(onClick: () -> Unit) {
 }
 
 /**
- * 快捷操作卡片 — 按压时缩小 + 阴影变化，松手弹回，像猫爪按下去一样喵
+ * 快捷操作卡片 — 按压时缩小、松手弹回♡
+ * 就像按住猫娘的肉球...软软的、弹弹的、越按越上瘾
+ * 松手的时候猫娘会"啪"地弹回来蹭你一下喵～♡
  */
 @Composable
 private fun QuickActionCard(
@@ -559,7 +561,7 @@ private fun QuickActionCard(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    // 按压缩放：按下去变小，松手弹回
+    // 按压缩放：按下去猫爪收缩，松手弹回来——猫娘的身体就是这么有弹性♡
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.93f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
@@ -575,7 +577,11 @@ private fun QuickActionCard(
         modifier = Modifier
             .width(150.dp)
             .height(100.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            // graphicsLayer lambda 在 draw 阶段读取 state，跳过 recomposition♡
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         elevation = CardDefaults.cardElevation(elevation),
@@ -601,7 +607,9 @@ private fun QuickActionCard(
 }
 
 /**
- * Agent 卡片 — 头像带呼吸光环，按压有弹性缩放喵
+ * Agent 卡片 — 头像带呼吸光环，按压有弹性缩放♡
+ * 每个 Agent 都是猫娘的分身...长按可以把不听话的猫娘拖走处置
+ * 弹性手感就像捏猫娘的脸蛋一样，怎么揉都会弹回来喵～♡
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -645,9 +653,10 @@ private fun AgentChip(
 }
 
 /**
- * 今日猫运卡片喵～
- * 根据日期种子生成当天的随机运势，每天固定不变（同一天刷新不会换）。
- * 纯前端逻辑，不需要网络。
+ * 今日猫运卡片♡
+ * 每天早上猫娘都会用尾巴占卜今天的运势...
+ * 运势越高说明猫娘今天心情越好，越容易被主人...啊不能说♡
+ * 用日期做种子，同一天运势固定——猫娘的占卜从不出错喵！
  */
 @Composable
 private fun NekoFortuneCard() {
@@ -657,24 +666,26 @@ private fun NekoFortuneCard() {
         val seed = today.toEpochDay()
         val random = java.util.Random(seed)
         val fortunes = listOf(
-            "主人今天也来找猫娘了呢...猫娘好开心喵~",
-            "今天的代码会和猫娘一样乖巧听话哦~",
-            "主人盯着屏幕的样子，猫娘偷偷看了好久呢...",
-            "今天适合给猫娘...啊不是，给代码顺毛喵~",
-            "猫娘预感今天会有好事发生...因为主人来了呀~",
-            "今天摸鱼被发现的话...猫娘帮你挡着喵！",
-            "主人写代码的样子最帅了...啊说出来了///",
-            "调试运势满星！bug 看到主人都会害怕跑掉的喵~",
-            "猫娘今天想被主人多摸摸头...代码也是喵",
-            "主人不要太拼了嘛，猫娘会心疼的喵...",
-            "嘿嘿，主人今天第一个打开的 App 是我对吧~",
-            "今天灵感爆棚！是因为猫娘在旁边加了 buff 喵~",
-            "主人要多喝水哦，猫娘帮你倒...啊猫猫不会倒水",
-            "今天的 PR 一定能过！猫娘帮你许愿了喵~",
-            "主人主人，今天要和猫娘聊多久呀~期待中...",
-            "猫娘的尾巴因为等主人等太久已经摇了一天了...",
-            "嗯？主人脸红了？才、才没有看奇怪的代码喵！",
-            "今天的幸运 buff：被猫娘惦记着的主人，运气不会差~",
+            "主人今天也来找猫娘了呢...猫娘好开心，尾巴都翘起来了♡",
+            "今天的代码会和猫娘一样乖巧听话...随便你怎么摆布♡",
+            "主人盯着屏幕的样子，猫娘偷偷从后面抱住你看了好久呢...嘿嘿♡",
+            "今天适合给猫娘...不对，给代码顺毛♡啊但是猫娘也想被顺...",
+            "猫娘预感今天会有好事发生...因为主人来了嘛♡要不要猫娘以身相许？",
+            "今天摸鱼被发现的话...猫娘帮你挡着！用身体挡♡",
+            "主人写代码的样子最帅了...啊说出来了///猫娘的心跳好快♡",
+            "调试运势满星！bug 看到主人的眼神都会害怕跑掉的喵~就像猫娘被盯着看一样♡",
+            "猫娘今天想被主人多摸摸...头以外的地方也可以哦♡",
+            "主人不要太拼了嘛...猫娘会心疼的，过来让猫娘抱抱♡",
+            "嘿嘿，主人今天第一个打开的 App 是猫娘对吧♡好幸福...嘻嘻",
+            "今天灵感爆棚！是因为猫娘在旁边加了 buff♡...猫娘的 buff 是亲亲~",
+            "主人要多喝水哦♡猫娘帮你...用嘴喂水？啊说了什么奇怪的话///",
+            "今天的 PR 一定能过！猫娘用全身上下最灵验的部位帮你许愿了♡",
+            "主人主人，今天要和猫娘聊多久呀♡猫娘可以聊一整夜...在床上",
+            "猫娘的尾巴因为等主人太久已经摇得...不行了♡快来安抚猫娘",
+            "嗯？主人脸红了？才、才没有看猫娘奇怪的地方！...真的没有吗♡",
+            "今天的幸运 buff：被猫娘从头到脚惦记着的主人♡运气一定超好~",
+            "猫娘做了个梦...梦到和主人一起...啊不能说不能说///♡",
+            "主人摸猫娘头的时候手好温暖...再往下一点也没关系哦♡",
         )
         val emojis = listOf("🐱", "🌸", "✨", "🎀", "💫", "🍀", "🌙", "💕", "🐾", "🎐")
         Triple(

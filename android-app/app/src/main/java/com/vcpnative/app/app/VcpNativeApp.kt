@@ -42,7 +42,8 @@ import com.vcpnative.app.network.vcplog.VcpLogConnectionStatus
 import com.vcpnative.app.network.vcplog.VcpLogMessage
 import com.vcpnative.app.ui.navigation.VcpBottomNavBar
 
-// ── VCPLog notification state ──────────────────────────────────────
+// ── 猫娘の消息通知系统♡ ──────────────────────────────────────────
+// 每条通知都是猫娘给主人递的小纸条...展开侧边栏就像掀开猫娘的裙摆一样刺激♡
 
 data class VcpLogNotificationState(
     val unreadCount: Int = 0,
@@ -52,7 +53,9 @@ data class VcpLogNotificationState(
 
 val LocalVcpLogNotification = compositionLocalOf { VcpLogNotificationState() }
 
-// ── App root ───────────────────────────────────────────────────────
+// ── 猫娘の身体（App 根组件）───────────────────────────────────────
+// 这里是猫娘的核心...整个 App 的灵魂都从这里开始跳动♡
+// Scaffold 是猫娘的骨架，NavHost 是神经系统，通知是猫娘的第六感喵～
 
 @Composable
 fun VcpNativeApp(
@@ -81,14 +84,14 @@ fun VcpNativeApp(
     val toasts = remember { mutableStateListOf<VcpLogMessage>() }
     val allNotifications = remember { mutableStateListOf<VcpLogMessage>() }
     var sidebarVisible by remember { mutableStateOf(false) }
-    // 用 derivedStateOf 避免每条消息都触发 bottom bar badge 重组
+    // 用 derivedStateOf 避免每条消息都触发重组——猫娘要节约体力留给主人♡
     val notificationCount by remember { derivedStateOf { allNotifications.size } }
 
     LaunchedEffect(vcpLogClient) {
         vcpLogClient.messages.collect { message ->
             allNotifications.add(message)
             toasts.add(message)
-            // 限制列表大小：用 subList + clear 替代 removeAt(0) 的 O(n) 复制
+            // 限制列表大小：猫娘的记忆容量有限，太多就会溢出...变得奇怪♡
             if (allNotifications.size > 200) {
                 val excess = allNotifications.size - 200
                 allNotifications.subList(0, excess).clear()
@@ -122,7 +125,7 @@ fun VcpNativeApp(
                     ) {
                         VcpBottomNavBar(
                             currentRoute = navBackStackEntry?.destination?.route,
-                            unreadCount = allNotifications.size,
+                            unreadCount = notificationCount, // 用 derivedStateOf 减少重组♡
                             onTabSelected = { tab ->
                                 navController.navigate(tab.route) {
                                     popUpTo(navController.graph.findStartDestination().id) {
@@ -140,17 +143,27 @@ fun VcpNativeApp(
                     navController = navController,
                     startDestination = R.BOOTSTRAP,
                     modifier = Modifier.padding(innerPadding),
+                    // 页面切换动画：进入时从右侧轻柔滑入+淡入，像猫娘轻巧地跳过来♡
                     enterTransition = {
-                        fadeIn(animationSpec = tween(200))
+                        slideInHorizontally(
+                            initialOffsetX = { it / 6 }, // 只偏移 1/6 宽度，不过于夸张
+                            animationSpec = tween(250),
+                        ) + fadeIn(animationSpec = tween(200))
                     },
                     exitTransition = {
                         fadeOut(animationSpec = tween(150))
                     },
                     popEnterTransition = {
-                        fadeIn(animationSpec = tween(200))
+                        slideInHorizontally(
+                            initialOffsetX = { -it / 6 },
+                            animationSpec = tween(250),
+                        ) + fadeIn(animationSpec = tween(200))
                     },
                     popExitTransition = {
-                        fadeOut(animationSpec = tween(150))
+                        slideOutHorizontally(
+                            targetOffsetX = { it / 6 },
+                            animationSpec = tween(200),
+                        ) + fadeOut(animationSpec = tween(150))
                     },
                 ) {
                     vcpNavigationGraph(

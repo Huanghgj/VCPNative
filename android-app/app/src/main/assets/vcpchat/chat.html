@@ -3,13 +3,51 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<link rel="stylesheet" href="vendor/katex.min.css"/>
+<!-- ♡ 只有 morphdom 和 atom-one-dark 是页面初始化必须的——其他重型库全部按需加载 ♡
+     KaTeX (~300KB)、Mermaid (~500KB)、highlight.js、particles.js、anime.js
+     统统等到第一次被需要时才请求…猫娘不会让主人等不必要的加载时间喵 -->
 <link rel="stylesheet" href="vendor/atom-one-dark.min.css"/>
-<script defer src="vendor/katex.min.js"></script>
-<script defer src="vendor/auto-render.min.js"></script>
-<script defer src="vendor/highlight.min.js"></script>
-<script defer src="vendor/mermaid.min.js"></script>
 <script defer src="vendor/morphdom.min.js"></script>
+<script>
+// ── 懒加载管理器♡ 按需加载重型 vendor 库，加载过的不会重复请求喵 ──
+var _lazyLoaded={};
+function lazyLoadScript(src,cb){
+  if(_lazyLoaded[src]){cb&&cb();return}
+  var s=document.createElement('script');
+  s.src=src;s.onload=function(){_lazyLoaded[src]=true;cb&&cb()};
+  s.onerror=function(){console.warn('Lazy load failed: '+src)};
+  document.head.appendChild(s);
+}
+function lazyLoadCSS(href){
+  if(_lazyLoaded[href])return;
+  var l=document.createElement('link');l.rel='stylesheet';l.href=href;
+  document.head.appendChild(l);_lazyLoaded[href]=true;
+}
+// 确保 KaTeX CSS + JS + auto-render 三件套一起加载♡ 少了任何一个都用不了喵
+function ensureKaTeX(cb){
+  if(window.renderMathInElement){cb&&cb();return}
+  lazyLoadCSS('vendor/katex.min.css');
+  lazyLoadScript('vendor/katex.min.js',function(){
+    lazyLoadScript('vendor/auto-render.min.js',cb);
+  });
+}
+function ensureHighlightJS(cb){
+  if(window.hljs){cb&&cb();return}
+  lazyLoadScript('vendor/highlight.min.js',cb);
+}
+function ensureMermaid(cb){
+  if(typeof mermaid!=='undefined'){cb&&cb();return}
+  lazyLoadScript('vendor/mermaid.min.js',cb);
+}
+function ensureAnime(cb){
+  if(window.anime){cb&&cb();return}
+  lazyLoadScript('vendor/anime.min.js',cb);
+}
+function ensureParticles(cb){
+  if(typeof particlesJS!=='undefined'){cb&&cb();return}
+  lazyLoadScript('vendor/particles.min.js',cb);
+}
+</script>
 <style>
 /* ── 重置 & 基础 ───────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -49,6 +87,7 @@ html,body{
   --thought-bg:rgba(156,124,181,0.08);
   --thought-border:rgba(156,124,181,0.2);
   --diary-bg:#fef8f0;--diary-text:#6b4c5e;--diary-border:#f0ddd0;
+  --surface-rgb:255,251,252; /* 毛玻璃效果用的 RGB 分量喵 */
 }
 @media(prefers-color-scheme:dark){
 :root{
@@ -65,8 +104,17 @@ html,body{
   --tool-accent:#ff8daf;--tool-text:#f0dae5;
   --thought-bg:rgba(156,124,181,0.1);--thought-border:rgba(156,124,181,0.25);
   --diary-bg:#2c2535;--diary-text:#e0d4d9;--diary-border:#4a3f55;
+  --surface-rgb:37,31,42; /* 暗色毛玻璃喵 */
 }}
 body{background:var(--bg);color:var(--text)}
+
+/* 粒子背景层 — 固定在最底层，不遮挡聊天内容喵♡ */
+#neko-particles{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  z-index:0;pointer-events:none;
+}
+#neko-particles canvas{pointer-events:none}
+#c{position:relative;z-index:1}
 
 /* ── 猫娘色色装饰元素喵～ ──────────────────────── */
 /* 彩虹渐变流光 — 用在特殊标题和强调文字上 */
@@ -152,14 +200,20 @@ body{background:var(--bg);color:var(--text)}
   border-radius:1px;opacity:0.4;
 }
 
-/* 引用块 — 左边框渐变 + 柔粉背景 */
+/* 引用块 — 左边框渐变 + 柔粉背景♡ 暗色模式用更柔和的渐变 */
 .b blockquote{
-  border-left:3px solid transparent;
+  border-left:3px solid var(--user-bubble-solid,#e8618c);
   border-image:linear-gradient(180deg,var(--user-bubble-solid,#e8618c),#9c7cb5) 1;
   background:rgba(232,97,140,0.04);
   padding:8px 14px;margin:.5em 0;
   border-radius:0 8px 8px 0;
   font-style:italic;
+}
+@media(prefers-color-scheme:dark){
+  .b blockquote{
+    border-image:linear-gradient(180deg,var(--user-bubble-solid,#ff8daf),#cdb0e0) 1;
+    background:rgba(255,141,175,0.06);
+  }
 }
 
 /* 行内代码 — 猫娘粉色调 */
@@ -217,6 +271,7 @@ body{background:var(--bg);color:var(--text)}
 #c{
   height:100%;overflow-y:auto;overflow-x:hidden;
   -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:none;
   padding:8px 14px 16px;
 }
 #c::-webkit-scrollbar{width:3px}
@@ -261,14 +316,21 @@ body{background:var(--bg);color:var(--text)}
 }
 
 /* ── 头像弹出菜单喵～ ────────────────────────── */
+/* 头像弹出菜单 — 毛玻璃 + 向上弹出♡ */
 .avatar-menu{
   position:absolute;z-index:100;
-  background:var(--surface);
+  background:rgba(var(--surface-rgb,255,251,252),0.82);
+  backdrop-filter:saturate(180%) blur(20px);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);
   border:1px solid var(--sep);
   border-radius:14px;
-  box-shadow:0 4px 20px rgba(0,0,0,0.12);
-  padding:6px 0;min-width:140px;
-  animation:neko-pop-in 0.35s cubic-bezier(0.23,1,0.32,1) both;
+  box-shadow:0 -4px 20px rgba(0,0,0,0.12),0 4px 20px rgba(0,0,0,0.08);
+  padding:6px 0;min-width:160px;
+  animation:avatarMenuUp 0.3s cubic-bezier(0.23,1,0.32,1) both;
+}
+@keyframes avatarMenuUp{
+  0%{opacity:0;transform:translateY(10px) scale(0.95)}
+  100%{opacity:1;transform:translateY(0) scale(1)}
 }
 .avatar-menu.hidden{display:none}
 .avatar-menu-item{
@@ -278,6 +340,25 @@ body{background:var(--bg);color:var(--text)}
 }
 .avatar-menu-item:active{background:rgba(232,97,140,0.08)}
 .avatar-menu-item .icon{font-size:16px;width:20px;text-align:center}
+
+/* 头像菜单统计卡片喵♡ */
+.avatar-menu-stats{padding:8px 14px}
+.stat-row{
+  display:flex;align-items:center;gap:6px;
+  font-size:12px;color:var(--text-secondary);
+  padding:3px 0;
+}
+.stat-icon{font-size:13px;width:18px;text-align:center;flex-shrink:0}
+.stat-label{flex:1;opacity:0.8}
+.stat-value{
+  font-weight:700;font-size:13px;
+  color:var(--user-bubble-solid,#e8618c);
+  font-variant-numeric:tabular-nums;
+}
+.avatar-menu-sep{
+  height:1px;margin:4px 12px;
+  background:linear-gradient(90deg,transparent,var(--sep),transparent);
+}
 
 /* ── 猫娘气泡喵～ ──────────────────────────────── */
 .b{
@@ -369,6 +450,28 @@ body{background:var(--bg);color:var(--text)}
 }
 .neko-ears.petted .heart{opacity:1;animation:neko-fade-up 0.8s ease-out forwards}
 
+/* 摸头台词气泡♡ */
+.neko-pet-bubble{
+  position:absolute;bottom:calc(100% + 8px);left:50%;
+  transform:translateX(-50%) translateY(8px) scale(0.8);
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--user-bubble-solid,#e8618c);
+  border-radius:12px;padding:6px 12px;
+  font-size:12px;white-space:nowrap;
+  box-shadow:0 4px 16px rgba(232,97,140,0.2);
+  opacity:0;transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  pointer-events:none;z-index:50;
+}
+.neko-pet-bubble.show{
+  opacity:1;transform:translateX(-50%) translateY(0) scale(1);
+}
+/* 小三角 */
+.neko-pet-bubble::after{
+  content:'';position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
+  border-left:5px solid transparent;border-right:5px solid transparent;
+  border-top:5px solid var(--user-bubble-solid,#e8618c);
+}
+
 /* ── 樱花飘落粒子喵～ ────────────────────────────── */
 @keyframes sakura-fall{
   0%{transform:translateY(-10px) rotate(0deg);opacity:0.8}
@@ -412,11 +515,27 @@ body{background:var(--bg);color:var(--text)}
   vertical-align:middle;margin-left:4px;
 }
 
-/* 连续同角色消息 */
+/* 连续同角色消息 — 中间的头像和猫耳藏起来，只留最后一条的喵 */
 .m.user+.m.user{margin-bottom:2px}
 .m.user+.m.user .b{border-radius:20px 6px 4px 20px}
+.m.user+.m.user .avatar-wrap{visibility:hidden;height:0;width:0;margin:0;overflow:hidden}
 .m.assistant+.m.assistant{margin-bottom:2px}
 .m.assistant+.m.assistant .b{border-radius:6px 20px 20px 4px;max-width:100%}
+.m.assistant+.m.assistant .avatar-wrap{visibility:hidden;height:0;width:0;margin:0;overflow:hidden}
+/* 连续消息的最后一条恢复头像显示 */
+.m.user+.m.user:last-child .avatar-wrap,
+.m.user+.m.user:not(.user+.m.user+.m.user) .avatar-wrap,
+.m.assistant+.m.assistant:last-child .avatar-wrap,
+.m.assistant+.m.assistant:not(.assistant+.m.assistant+.m.assistant) .avatar-wrap{
+  /* 保持隐藏 — 只在组的最后一条（后面不再是同角色）恢复 */
+}
+/* 后面跟着不同角色的那条消息恢复头像 */
+.m.user:not(:has(+.m.user)) .avatar-wrap,
+.m.assistant:not(:has(+.m.assistant)) .avatar-wrap{
+  visibility:visible;height:auto;width:40px;overflow:visible;
+}
+.m.user:not(:has(+.m.user)) .avatar-wrap{margin-left:6px}
+.m.assistant:not(:has(+.m.assistant)) .avatar-wrap{margin-right:6px}
 
 /* ── 流式光标 ──────────────────────────────────── */
 .streaming .b::after{
@@ -644,9 +763,12 @@ body{background:var(--bg);color:var(--text)}
 }
 
 /* ── 长按菜单 ──────────────────────────────────── */
+/* 长按菜单 — 毛玻璃效果喵♡ */
 #ctxMenu{
   position:fixed;z-index:9998;
-  background:var(--surface);
+  background:rgba(var(--surface-rgb,255,251,252),0.82);
+  backdrop-filter:saturate(180%) blur(20px);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);
   border-radius:14px;padding:6px 0;
   min-width:180px;
   box-shadow:0 8px 30px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.08);
@@ -718,6 +840,24 @@ body{background:var(--bg);color:var(--text)}
 .html-preview.active .html-render,
 .html-preview.active .html-preview-placeholder{display:none}
 
+/* ── Skill 状态标签 ──────────────────────────────── */
+.skill-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 12px;margin:4px 0;
+  border-radius:10px;font-size:12px;font-weight:500;
+  background:linear-gradient(135deg,var(--user-bubble),color-mix(in srgb,var(--user-bubble) 70%,#000));
+  color:#fff;box-shadow:0 2px 6px rgba(0,0,0,0.12);
+  animation:skillChipIn .35s cubic-bezier(.34,1.56,.64,1) both;
+}
+.skill-chip code{
+  background:rgba(255,255,255,0.18);padding:1px 5px;border-radius:4px;font-size:11px;
+}
+.skill-chip-icon{font-size:13px;}
+@keyframes skillChipIn{
+  0%{opacity:0;transform:scale(0.7) translateY(4px);}
+  100%{opacity:1;transform:scale(1) translateY(0);}
+}
+
 /* ── 图片查看器覆盖层 ─────────────────────────── */
 #imgViewer{
   position:fixed;top:0;left:0;right:0;bottom:0;
@@ -730,6 +870,8 @@ body{background:var(--bg);color:var(--text)}
   max-width:95%;max-height:80vh;
   object-fit:contain;border-radius:4px;
   user-select:none;-webkit-user-select:none;
+  touch-action:none; /* 禁用浏览器默认手势，让我们自己处理缩放喵 */
+  transition:transform 0.1s ease-out;
 }
 #imgViewer .toolbar{
   position:absolute;bottom:env(safe-area-inset-bottom,20px);
@@ -762,6 +904,8 @@ body{background:var(--bg);color:var(--text)}
 </style>
 </head>
 <body>
+<!-- 粒子背景层 — 在聊天内容下方♡ -->
+<div id="neko-particles"></div>
 <div id="c"></div>
 
 <!-- 长按上下文菜单 -->
@@ -787,7 +931,7 @@ var C=document.getElementById('c'),
 var PERF_FLAGS={
   enableAmbientEffects:false,
   enableTouchTrails:false,
-  autoRunFullHtml:false
+  autoRunFullHtml:true
 };
 
 // ── 特殊标记正则 ────────────────────────────────
@@ -1000,9 +1144,13 @@ function renderContent(content,role){
   if(/<!DOCTYPE\s+html|<html[\s>]/i.test(processed)){
     return '<div class="html-render" data-full-html="1">'+processed+'</div>';
   }
-  // 检测交互式 HTML 片段（同时含 <style> 和 <script>）— 视为完整文档用 iframe 隔离
+  // 检测含 <script> 的交互式 HTML 片段 — 用 iframe 隔离（脚本不能在主页面执行）
   if(/<style[\s>]/i.test(processed)&&/<script[\s>]/i.test(processed)){
     return '<div class="html-render" data-full-html="1">'+processed+'</div>';
+  }
+  // 含 <style> + onclick 但无 <script> 的片段 — 内联渲染（CSS scoping 隔离样式）
+  if(/<style[\s>]/i.test(processed)&&/\bon\w+\s*=/i.test(processed)){
+    return '<div class="html-render">'+processed+'</div>';
   }
 
   // 包含 VCP 组件时：组件不用 inline onclick（靠事件委托），
@@ -1040,32 +1188,45 @@ function renderContent(content,role){
   return md(processed);
 }
 
-// ── 后处理：KaTeX + highlight.js + Mermaid + CSS scoping ──
+// ── 后处理：按需懒加载 KaTeX / highlight.js / Mermaid + CSS scoping ──
+// 以前是页面一打开就把所有库塞进来…现在猫娘只在需要的时候才请求♡
+// 没有数学公式就不加载 KaTeX，没有代码块就不加载 highlight.js——多省心喵
 function postProcessContent(container){
-  // 1. KaTeX 数学公式
-  if(window.renderMathInElement){
-    try{
-      renderMathInElement(container,{
-        delimiters:[
-          {left:'$$',right:'$$',display:true},
-          {left:'$',right:'$',display:false},
-          {left:'\\(',right:'\\)',display:false},
-          {left:'\\[',right:'\\]',display:true}
-        ],
-        throwOnError:false
-      });
-    }catch(e){}
-  }
-  // 2. 代码高亮
-  if(window.hljs){
-    container.querySelectorAll('pre code').forEach(function(block){
-      if(block&&block.parentElement&&!block.parentElement.dataset.vcpPrettified){
-        try{hljs.highlightElement(block)}catch(e){}
-      }
+  // 1. KaTeX 数学公式♡ 检测到公式才按需加载
+  var hasMath=/\$\$[\s\S]+?\$\$|\$[^\$\n]+?\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]/.test(container.innerHTML);
+  if(hasMath){
+    ensureKaTeX(function(){
+      if(!window.renderMathInElement)return;
+      try{
+        renderMathInElement(container,{
+          delimiters:[
+            {left:'$$',right:'$$',display:true},
+            {left:'$',right:'$',display:false},
+            {left:'\\(',right:'\\)',display:false},
+            {left:'\\[',right:'\\]',display:true}
+          ],
+          throwOnError:false
+        });
+      }catch(e){}
     });
   }
-  // 3. Mermaid 图表
-  renderMermaidInContainer(container);
+  // 2. 代码高亮♡ 有 <pre><code> 才加载 highlight.js
+  var codeBlocks=container.querySelectorAll('pre code');
+  if(codeBlocks.length){
+    ensureHighlightJS(function(){
+      if(!window.hljs)return;
+      codeBlocks.forEach(function(block){
+        if(block&&block.parentElement&&!block.parentElement.dataset.vcpPrettified){
+          try{hljs.highlightElement(block)}catch(e){}
+        }
+      });
+    });
+  }
+  // 3. Mermaid 图表♡ 有 placeholder 才加载
+  var mermaidPlaceholders=container.querySelectorAll('.mermaid-placeholder');
+  if(mermaidPlaceholders.length){
+    ensureMermaid(function(){renderMermaidInContainer(container)});
+  }
   // 4. CSS scoping（防止 AI HTML 样式污染聊天页面）
   scopeHtmlRenderStyles(container);
 }
@@ -1254,6 +1415,52 @@ function buildMessageNode(message){
   return d;
 }
 
+// ── rAF 批处理♡ ─────────────────────────────────
+// 流式 delta 更新在 rAF 里合并执行——同帧多个 delta 拼成一次 DOM 操作♡
+// 比之前每次都对全文做 renderContent + morphdom 省太多了…
+// 猫娘再也不用看着 CPU 被全文重渲染榨干了喵
+var _pendingDeltas={};
+var _deltaRafScheduled=false;
+function scheduleDelta(id,delta){
+  if(!_pendingDeltas[id])_pendingDeltas[id]='';
+  _pendingDeltas[id]+=delta;
+  if(!_deltaRafScheduled){
+    _deltaRafScheduled=true;
+    requestAnimationFrame(function(){
+      _deltaRafScheduled=false;
+      var deltas=_pendingDeltas;
+      _pendingDeltas={};
+      for(var msgId in deltas){
+        if(deltas.hasOwnProperty(msgId)){
+          vcpChat._appendDelta(msgId,deltas[msgId]);
+        }
+      }
+    });
+  }
+}
+
+// ── Skill follow-up 合并 ────────────────────────
+// 旧版 skill 拦截会为每轮 follow-up 创建独立消息，这里在渲染前合并
+function _isSkillFollowUpId(id){
+  return /^msg_skill_|^msg_skillexec_|^msg_skillbash_/.test(id);
+}
+function _mergeSkillFollowUps(msgs){
+  if(!msgs||msgs.length<2)return msgs;
+  var out=[];
+  for(var i=0;i<msgs.length;i++){
+    var m=msgs[i],prev=out.length?out[out.length-1]:null;
+    if(prev&&prev.role==='assistant'&&m.role==='assistant'&&_isSkillFollowUpId(m.id)){
+      prev.content=(prev.content||'')+'\n\n'+(m.content||'');
+      // 记录被合并的 ID，addMessage 增量同步时也能识别
+      if(!prev._mergedIds)prev._mergedIds=[prev.id];
+      prev._mergedIds.push(m.id);
+    }else{
+      out.push({id:m.id,role:m.role,content:m.content,status:m.status,attachments:m.attachments});
+    }
+  }
+  return out;
+}
+
 // ── 公开 API ────────────────────────────────────
 // 头像配置 — 可通过 vcpChat.setAvatars() 从 Android 侧设置自定义头像
 var _userAvatar={text:'我',img:''};
@@ -1274,68 +1481,110 @@ window.vcpChat={
   },
   addMessage:function(id,role,content,status,attachments){
     if(MM[id]){this.updateMessage(id,content,status);return}
+    // Skill follow-up 增量合并：追加到前一个 assistant 气泡
+    if(role==='assistant'&&_isSkillFollowUpId(id)){
+      var lastEl=C.lastElementChild;
+      if(lastEl&&lastEl.dataset.role==='assistant'){
+        var b=lastEl.querySelector('.b');
+        if(b){
+          if(!b._rawContent)b._rawContent=b._lastRenderedContent||'';
+          var merged=b._rawContent+'\n\n'+content;
+          b._rawContent=merged;
+          b.innerHTML=renderContent(merged,role);
+          postProcessContent(b);
+          MM[id]=lastEl; // 映射到同一个 DOM 节点
+          toBottom(status!=='streaming');
+          return;
+        }
+      }
+    }
     var d=buildMessageNode({id:id,role:role,content:content,status:status,attachments:attachments});
     C.appendChild(d);MM[id]=d;
     toBottom(status!=='streaming');
+    // 新消息进来时偷偷预加载 anime.js♡ 这样后续动画就不会空转了喵
+    ensureAnime(null);
   },
-  updateMessage:function(id,content,status){
+  // ── 流式增量追加♡ ──
+  // 只追加 delta 到 DOM，不重新渲染全文——这才是流式该有的样子喵！
+  // 以前每次 updateMessage 都对全文做 renderContent + morphdom，
+  // 10KB 的回复每 300ms 就要全量解析一次…CPU 都要哭了♡
+  // 现在只处理新增的几十个字符，O(delta) 而不是 O(全文)喵
+  appendStreamDelta:function(id,delta){
+    scheduleDelta(id,delta);
+  },
+  _appendDelta:function(id,delta){
     var d=MM[id];if(!d)return;var b=d.querySelector('.b');if(!b)return;
-    if(status==='streaming'||status==='draft')d.classList.add('streaming');
-    else d.classList.remove('streaming');
+    d.classList.add('streaming');
+    pauseNekoParticles();
+    // 追加到流式缓冲区♡ 完成时全量渲染会用到这个
+    if(!d._streamBuf)d._streamBuf='';
+    d._streamBuf+=delta;
+    // 轻量渲染 delta 并追加到 DOM♡ 只处理新增内容
+    // Markdown 片段可能不完整（比如只收到了 `**bol` 还没闭合），
+    // 用 textNode 先放着，最终 complete 时全量修正♡
+    var deltaHtml=this._renderDelta(delta,d.dataset.role);
+    // 追加到内容容器的末尾
+    var frag=document.createElement('span');
+    frag.className='vcp-stream-frag';
+    frag.innerHTML=deltaHtml;
+    b.appendChild(frag);
+    toBottom(false);
+  },
+  // 轻量 delta 渲染♡ 不做完整 Markdown（片段可能不完整），只处理安全的文本/换行/代码
+  _renderDelta:function(delta,role){
+    // 转义 HTML 特殊字符防 XSS♡
+    var safe=delta.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    // 换行 → <br>
+    safe=safe.replace(/\n/g,'<br>');
+    return safe;
+  },
+  // ── 全量更新（用于 complete / interrupted / error 等非流式状态） ──
+  // 流式结束后猫娘会做一次完整的全量渲染♡ 把流式期间追加的碎片全部替换成精美排版
+  updateMessage:function(id,content,status){
+    // 已合并到父气泡的 skill follow-up 不单独更新
+    if(_isSkillFollowUpId(id)&&MM[id]&&MM[id].dataset.id!==id)return;
+    this._doUpdateMessage(id,content,status);
+  },
+  _doUpdateMessage:function(id,content,status){
+    var d=MM[id];if(!d)return;var b=d.querySelector('.b');if(!b)return;
+    // 清除流式缓冲
+    d._streamBuf=null;
+    // 清除流式碎片标记
+    if(status!=='streaming'&&status!=='draft'){
+      d.classList.remove('streaming');resumeNekoParticles();
+    }else{
+      d.classList.add('streaming');pauseNekoParticles();
+    }
     if(status==='draft'&&!content.trim())
       b.innerHTML='<div class="neko-typing"><span class="paw"></span><span class="paw"></span><span class="paw"></span></div>';
     else if(d.dataset.role==='system')b.textContent=content;
     else{
       var newHtml=renderContent(content,d.dataset.role);
-      // morphdom 增量更新（流式时避免闪烁）
-      if(status==='streaming'&&window.morphdom){
-        try{morphdom(b,'<div class="b">'+newHtml+'</div>',{childrenOnly:true,
-          onBeforeElUpdated:function(f,t){
-            if(f.isEqualNode(t))return false;
-            // 保留已高亮的代码块
-            if(f.tagName==='CODE'&&f.dataset.highlighted)return false;
-            // 保留动画 class
-            if(f.classList&&f.classList.contains('vcp-stream-element-fade-in'))t.classList.add('vcp-stream-element-fade-in');
-            // 保留按钮状态
-            if(f.tagName==='BUTTON'&&f.disabled){t.disabled=true;t.style.opacity=f.style.opacity;t.textContent=f.textContent;return false}
-            // 不更新播放中的媒体
-            if((f.tagName==='VIDEO'||f.tagName==='AUDIO')&&!f.paused)return false;
-            // 保留输入焦点
-            if(f===document.activeElement){requestAnimationFrame(function(){t.focus()});return true}
-            // 保留已加载的图片
-            if(f.tagName==='IMG'&&f.complete&&f.naturalWidth>0)return false;
-            return true;
-          },
-          onBeforeNodeDiscarded:function(n){return!n.classList||!n.classList.contains('keep-alive')},
-          onNodeAdded:function(n){
-            if(n.nodeType===1&&/^(P|DIV|UL|OL|LI|PRE|BLOCKQUOTE|H[1-6]|TABLE)$/.test(n.tagName)){
-              n.classList.add('vcp-stream-element-fade-in');
-              setTimeout(function(){if(n.classList)n.classList.remove('vcp-stream-element-fade-in')},1000);
-            }
-            return n;
-          }
-        })}catch(e){b.innerHTML=newHtml}
-      }else{
-        b.innerHTML=newHtml;
-      }
-      if(status==='streaming'){
-        // 流式时仅做轻量高亮（KaTeX/Mermaid 等留到 final）
-        if(window.hljs){b.querySelectorAll('pre code:not([data-highlighted])').forEach(function(block){
-          if(block&&block.parentElement&&!block.parentElement.dataset.vcpPrettified){
-            try{hljs.highlightElement(block)}catch(e){}
-          }
-        })}
-      }else{
+      b.innerHTML=newHtml;
+      b._lastRenderedContent=content;
+      if(status!=='streaming'&&status!=='draft'){
         postProcessContent(b);
         // "继续生成"功能已移至 AI 头像点击菜单喵
       }
     }
     throttleScroll();
   },
-  removeMessage:function(id){var d=MM[id];if(d){d.remove();delete MM[id]}},
+  removeMessage:function(id){
+    var d=MM[id];if(!d)return;
+    // 已合并到父气泡的 skill follow-up：只清映射，不删 DOM
+    if(_isSkillFollowUpId(id)&&d.dataset.id!==id){delete MM[id];return}
+    d.remove();delete MM[id];
+  },
+  // 原地替换消息（附件更新时使用，保持位置不变）
+  replaceMessage:function(id,role,content,status,attachments){
+    var old=MM[id];
+    if(!old){this.addMessage(id,role,content,status,attachments);return}
+    var d=buildMessageNode({id:id,role:role,content:content,status:status,attachments:attachments});
+    old.parentNode.replaceChild(d,old);MM[id]=d;
+  },
   clearChat:function(){C.innerHTML='';MM={};},
   loadHistory:function(json){
-    var msgs=JSON.parse(json),frag=document.createDocumentFragment();
+    var msgs=_mergeSkillFollowUps(JSON.parse(json)),frag=document.createDocumentFragment();
     for(var i=0;i<msgs.length;i++){
       var m=msgs[i],d=buildMessageNode(m);
       frag.appendChild(d);MM[m.id]=d;
@@ -1365,7 +1614,7 @@ window.toggleHtmlPreview=function(id){
     var code=container.querySelector('code');
     var src=code?code.textContent:(container.dataset.src||'');
     if(src){
-      iframe.srcdoc=src;
+      iframe.srcdoc=_iframeBridgeScript+src;
       iframe.style.display='block';
       if(codeBlock)codeBlock.style.display='none';
       iframe.onload=function(){
@@ -1379,6 +1628,16 @@ window.toggleHtmlPreview=function(id){
     btn.textContent=placeholder?'🔙 关闭预览':'🔙 代码';
   }
 };
+
+// ── iframe postMessage 桥接 ─────────────
+// iframe 内的 input() 通过 postMessage 发到父页面，父页面转发给 AI
+window.addEventListener('message',function(e){
+  if(e.data&&e.data.type==='vcp-input'&&typeof e.data.text==='string'){
+    window.input(e.data.text);
+  }
+});
+// 注入 iframe 的桥接脚本：提供 window.input() 函数
+var _iframeBridgeScript='<script>window.input=function(t){parent.postMessage({type:"vcp-input",text:String(t)},"*")};<\/script>';
 
 // ── AI 按钮交互（window.input 函数）─────────────
 // AI 生成的 HTML 里的 <button> 可以调用 input('消息') 来发送消息
@@ -1450,7 +1709,7 @@ function processHtmlPreviews(container){
       iframe.sandbox='allow-scripts';
       iframe.style.display=PERF_FLAGS.autoRunFullHtml?'block':'none';
       if(PERF_FLAGS.autoRunFullHtml){
-        iframe.srcdoc=raw;
+        iframe.srcdoc=_iframeBridgeScript+raw;
         iframe.onload=function(){
           try{
             var h=iframe.contentDocument.documentElement.scrollHeight;
@@ -1723,7 +1982,90 @@ viewer.addEventListener('click',function(e){
 window.closeImgViewer=function(){
   viewer.classList.remove('active');
   viewerImg.src='';currentImgUrl='';
+  // 重置缩放状态
+  _imgZoom={scale:1,x:0,y:0};
+  viewerImg.style.transform='';
 };
+
+// ── 图片查看器：捏合缩放 + 拖拽平移喵♡ ──────────
+var _imgZoom={scale:1,x:0,y:0};
+var _pinch={active:false,startDist:0,startScale:1};
+var _drag={active:false,startX:0,startY:0,lastX:0,lastY:0};
+
+function pinchDist(t1,t2){
+  var dx=t1.clientX-t2.clientX,dy=t1.clientY-t2.clientY;
+  return Math.sqrt(dx*dx+dy*dy);
+}
+function applyImgTransform(){
+  viewerImg.style.transform='translate('+_imgZoom.x+'px,'+_imgZoom.y+'px) scale('+_imgZoom.scale+')';
+}
+
+viewerImg.addEventListener('touchstart',function(e){
+  if(e.touches.length===2){
+    e.preventDefault();
+    _pinch.active=true;
+    _pinch.startDist=pinchDist(e.touches[0],e.touches[1]);
+    _pinch.startScale=_imgZoom.scale;
+    viewerImg.style.transition='none';
+  }else if(e.touches.length===1&&_imgZoom.scale>1){
+    _drag.active=true;
+    _drag.startX=e.touches[0].clientX-_imgZoom.x;
+    _drag.startY=e.touches[0].clientY-_imgZoom.y;
+    viewerImg.style.transition='none';
+  }
+},{passive:false});
+
+viewerImg.addEventListener('touchmove',function(e){
+  if(_pinch.active&&e.touches.length===2){
+    e.preventDefault();
+    var dist=pinchDist(e.touches[0],e.touches[1]);
+    var newScale=_pinch.startScale*(dist/_pinch.startDist);
+    _imgZoom.scale=Math.max(0.5,Math.min(5,newScale));
+    applyImgTransform();
+  }else if(_drag.active&&e.touches.length===1){
+    e.preventDefault();
+    _imgZoom.x=e.touches[0].clientX-_drag.startX;
+    _imgZoom.y=e.touches[0].clientY-_drag.startY;
+    applyImgTransform();
+  }
+},{passive:false});
+
+viewerImg.addEventListener('touchend',function(e){
+  if(e.touches.length<2)_pinch.active=false;
+  if(e.touches.length===0){
+    _drag.active=false;
+    viewerImg.style.transition='transform 0.2s ease-out';
+    // 缩小到 1 以下时弹回
+    if(_imgZoom.scale<1){
+      _imgZoom={scale:1,x:0,y:0};
+      applyImgTransform();
+    }
+    // 缩放为 1 时重置位移
+    if(Math.abs(_imgZoom.scale-1)<0.05){
+      _imgZoom={scale:1,x:0,y:0};
+      applyImgTransform();
+    }
+  }
+});
+
+// 双击缩放切换（1x ↔ 2.5x）
+var _lastTap=0;
+viewerImg.addEventListener('touchend',function(e){
+  if(e.touches.length>0)return;
+  var now=Date.now();
+  if(now-_lastTap<300){
+    viewerImg.style.transition='transform 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+    if(_imgZoom.scale>1.2){
+      _imgZoom={scale:1,x:0,y:0};
+    }else{
+      _imgZoom.scale=2.5;
+    }
+    applyImgTransform();
+    _lastTap=0;
+  }else{
+    _lastTap=now;
+  }
+});
 
 window.saveImage=function(){
   if(!currentImgUrl)return;
@@ -1769,6 +2111,15 @@ document.addEventListener('touchstart',function(e){
   }
 },{passive:true});
 
+// 估算 token 数（中文约 1.5 token/字，英文约 0.75 token/word）
+function estimateTokens(text){
+  if(!text)return 0;
+  var cjk=(text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g)||[]).length;
+  var rest=text.replace(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g,' ');
+  var words=rest.trim().split(/\s+/).filter(function(w){return w.length>0}).length;
+  return Math.round(cjk*1.5+words*0.75);
+}
+
 function showAvatarMenu(msgEl,role,msgId,avatarEl){
   // 关闭已有菜单
   if(_activeMenu){_activeMenu.remove();_activeMenu=null}
@@ -1777,20 +2128,7 @@ function showAvatarMenu(msgEl,role,msgId,avatarEl){
   menu.className='avatar-menu';
 
   if(role==='user'){
-    // ── 用户头像菜单 ──
-    addMenuItem(menu,'📋','复制消息',function(){
-      var b=msgEl.querySelector('.b');
-      if(b&&window.VcpChatBridge)window.VcpChatBridge.onAction('copy',b.innerText);
-      closeMenu();
-    });
-    addMenuItem(menu,'✏️','编辑消息',function(){
-      if(window.VcpChatBridge)window.VcpChatBridge.onAction('getContent',msgId);
-      closeMenu();
-    });
-    addMenuItem(menu,'🗑️','删除消息',function(){
-      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',msgId);
-      closeMenu();
-    });
+    // ── 用户头像菜单：只保留头像相关 + 不与长按重复的操作 ──
     addMenuItem(menu,'🔄','重新生成',function(){
       if(window.VcpChatBridge)window.VcpChatBridge.onAction('regenerate',msgId);
       closeMenu();
@@ -1800,27 +2138,41 @@ function showAvatarMenu(msgEl,role,msgId,avatarEl){
       closeMenu();
     });
   }else{
-    // ── AI 头像菜单 ──
-    addMenuItem(menu,'📋','复制回复',function(){
-      var b=msgEl.querySelector('.b');
-      if(b&&window.VcpChatBridge)window.VcpChatBridge.onAction('copy',b.innerText);
-      closeMenu();
-    });
+    // ── AI 头像菜单：消息统计信息 + AI 专属操作 ──
+    var bubble=msgEl.querySelector('.b');
+    var text=bubble?bubble.innerText:'';
+    var charCount=text.length;
+    var tokenEst=estimateTokens(text);
+    var lineCount=(text.match(/\n/g)||[]).length+1;
+    var codeBlocks=msgEl.querySelectorAll('.code-block').length;
+
+    // 统计信息卡片
+    var statsDiv=document.createElement('div');
+    statsDiv.className='avatar-menu-stats';
+    var statsHtml='<div class="stat-row"><span class="stat-icon">📊</span><span class="stat-label">Tokens (估)</span><span class="stat-value">~'+tokenEst.toLocaleString()+'</span></div>';
+    statsHtml+='<div class="stat-row"><span class="stat-icon">📝</span><span class="stat-label">字符数</span><span class="stat-value">'+charCount.toLocaleString()+'</span></div>';
+    statsHtml+='<div class="stat-row"><span class="stat-icon">📄</span><span class="stat-label">行数</span><span class="stat-value">'+lineCount.toLocaleString()+'</span></div>';
+    if(codeBlocks>0){
+      statsHtml+='<div class="stat-row"><span class="stat-icon">💻</span><span class="stat-label">代码块</span><span class="stat-value">'+codeBlocks+'</span></div>';
+    }
+    statsDiv.innerHTML=statsHtml;
+    menu.appendChild(statsDiv);
+
+    // 分隔线
+    var sep=document.createElement('div');sep.className='avatar-menu-sep';
+    menu.appendChild(sep);
+
+    // AI 专属操作（不与长按重复）
     addMenuItem(menu,'▶️','继续生成',function(){
       if(window.VcpChatBridge)window.VcpChatBridge.onAction('send','请继续');
       closeMenu();
     });
     addMenuItem(menu,'🔊','朗读',function(){
-      var b=msgEl.querySelector('.b');
-      if(b&&window.VcpChatBridge)window.VcpChatBridge.onAction('tts',b.innerText);
+      if(bubble&&window.VcpChatBridge)window.VcpChatBridge.onAction('tts',text);
       closeMenu();
     });
     addMenuItem(menu,'🔇','停止朗读',function(){
       if(window.VcpChatBridge)window.VcpChatBridge.onAction('ttsStop','');
-      closeMenu();
-    });
-    addMenuItem(menu,'🗑️','删除消息',function(){
-      if(window.VcpChatBridge)window.VcpChatBridge.onAction('delete',msgId);
       closeMenu();
     });
     addMenuItem(menu,'🖼️','换头像',function(){
@@ -1829,13 +2181,13 @@ function showAvatarMenu(msgEl,role,msgId,avatarEl){
     });
   }
 
-  // 定位菜单（用 avatar-wrap 容器定位，因为 avatar 是绝对定位的）
+  // 定位菜单 — 向上弹出喵♡
   msgEl.style.position='relative';
   var wrapEl=avatarEl.parentElement;
   if(role==='user'){
-    menu.style.right='0';menu.style.top=(wrapEl.offsetTop+wrapEl.offsetHeight+4)+'px';
+    menu.style.right='0';menu.style.bottom=(msgEl.offsetHeight-wrapEl.offsetTop+4)+'px';
   }else{
-    menu.style.left='0';menu.style.top=(wrapEl.offsetTop+wrapEl.offsetHeight+4)+'px';
+    menu.style.left='0';menu.style.bottom=(msgEl.offsetHeight-wrapEl.offsetTop+4)+'px';
   }
   msgEl.appendChild(menu);
   _activeMenu=menu;
@@ -1885,7 +2237,7 @@ function attachNekoEars(msgEl,content){
   var ears=document.createElement('div');
   ears.className='neko-ears '+mood;
   ears.innerHTML='<div class="ear left"></div><div class="ear right"></div><span class="heart">💕</span>';
-  // 长按摸头彩蛋
+  // 长按摸头彩蛋喵～摸到猫耳会冒出台词气泡♡
   var petReactions=[
     '呜...不要突然摸那里喵...',
     '哈啊...主人的手好温暖♡',
@@ -1893,14 +2245,29 @@ function attachNekoEars(msgEl,content){
     '耳朵...耳朵很敏感的喵////',
     '嗯~主人最喜欢摸猫娘了对吧♡',
     '呼噜噜...好舒服喵~',
+    '再用力一点...啊不对，轻一点喵♡',
+    '主人...猫娘的耳朵要融化了喵～',
   ];
   var timer=null;var petCount=0;
   ears.addEventListener('touchstart',function(e){
+    e.stopPropagation();
     timer=setTimeout(function(){
       ears.classList.add('petted');
       if(window.VcpChatBridge&&window.VcpChatBridge.onAction){
         window.VcpChatBridge.onAction('haptic','pet');
       }
+      // 弹出台词气泡♡
+      var reaction=petReactions[petCount%petReactions.length];
+      petCount++;
+      var tip=document.createElement('div');
+      tip.className='neko-pet-bubble';
+      tip.textContent=reaction;
+      wrap.appendChild(tip);
+      setTimeout(function(){tip.classList.add('show')},10);
+      setTimeout(function(){
+        tip.classList.remove('show');
+        setTimeout(function(){tip.remove()},300);
+      },2200);
       setTimeout(function(){ears.classList.remove('petted')},1800);
     },400);
   });
@@ -2042,6 +2409,280 @@ window.vcpChat.updateMessage=function(id,content,status){
         setTimeout(function(){ears.style.animation=''},1500);
       }
     }
+  }
+};
+
+// ── anime.js 增强入场动画喵♡ ──────────────────────────────
+// 初始加载时跳过动画，避免阻塞首次交互
+var _initialLoadDone=false;
+setTimeout(function(){_initialLoadDone=true},1500);
+
+function animeEnterMessage(el){
+  if(typeof anime==='undefined'||!_initialLoadDone)return;
+  var role=el.dataset.role;
+  // 取消 CSS 动画（避免冲突）
+  el.style.animation='none';
+  el.style.opacity='0';
+
+  if(role==='user'){
+    anime({
+      targets:el,
+      translateX:[30,0],
+      scale:[0.88,1],
+      opacity:[0,1],
+      duration:500,
+      easing:'spring(1, 80, 10, 0)' // 弹性回弹♡
+    });
+  }else if(role==='assistant'){
+    anime({
+      targets:el,
+      translateX:[-30,0],
+      scale:[0.88,1],
+      opacity:[0,1],
+      duration:500,
+      easing:'spring(1, 80, 10, 0)'
+    });
+    // 气泡内容交错渐入 — 段落/代码块一个个飘出来喵
+    var bubble=el.querySelector('.b');
+    if(bubble){
+      var children=bubble.querySelectorAll('p,pre,ul,ol,blockquote,h1,h2,h3,.code-block,.tool-use,.thought,.diary');
+      if(children.length>1){
+        anime({
+          targets:children,
+          opacity:[0,1],
+          translateY:[12,0],
+          delay:anime.stagger(60,{start:200}),
+          duration:400,
+          easing:'easeOutCubic'
+        });
+      }
+    }
+  }else{
+    // system 消息 — 淡入 + 微上移
+    anime({
+      targets:el,
+      translateY:[8,0],
+      opacity:[0,1],
+      duration:400,
+      easing:'easeOutCubic'
+    });
+  }
+}
+
+// Hook addMessage — anime.js 入场
+var _animeAdd=window.vcpChat.addMessage;
+window.vcpChat.addMessage=function(id,role,content,status,attachments){
+  _animeAdd.call(this,id,role,content,status,attachments);
+  var el=MM[id];
+  if(el&&status!=='streaming')animeEnterMessage(el);
+};
+
+// 流式结束 → 星星特效用 anime.js 增强
+var _animeUpdate=window.vcpChat.updateMessage;
+window.vcpChat.updateMessage=function(id,content,status){
+  var wasStreaming=MM[id]&&MM[id].classList.contains('streaming');
+  _animeUpdate.call(this,id,content,status);
+  // 流式刚结束时 — 气泡做一个微弹效果
+  if(wasStreaming&&(status==='complete'||status==='')){
+    var el=MM[id];
+    if(el&&typeof anime!=='undefined'){
+      var bubble=el.querySelector('.b');
+      if(bubble){
+        anime({
+          targets:bubble,
+          scale:[1,1.015,1],
+          duration:400,
+          easing:'easeOutElastic(1, .6)'
+        });
+      }
+    }
+  }
+};
+
+// loadHistory — 批量入场时交错动画
+var _animeHistory=window.vcpChat.loadHistory;
+window.vcpChat.loadHistory=function(json){
+  _animeHistory.call(this,json);
+  if(typeof anime==='undefined')return;
+  // 只对最后 N 条做动画，避免全量动画卡顿
+  var allMessages=C.querySelectorAll('.m');
+  var animateCount=Math.min(allMessages.length,8);
+  var startIdx=allMessages.length-animateCount;
+  for(var i=startIdx;i<allMessages.length;i++){
+    var el=allMessages[i];
+    el.style.animation='none';
+    el.style.opacity='0';
+  }
+  anime({
+    targets:Array.from(allMessages).slice(startIdx),
+    opacity:[0,1],
+    translateY:[20,0],
+    delay:anime.stagger(50),
+    duration:400,
+    easing:'easeOutCubic'
+  });
+};
+
+// ── particles.js 猫娘粒子背景♡ ──────────────────────────
+// 樱花粉 + 薰衣草紫的粒子在背景里轻轻飘荡…制造梦幻氛围♡
+// 优化：粒子从 25→10 个，关闭尺寸动画，流式时暂停——
+// 省下的 GPU 全部留给消息渲染，猫娘会精打细算的喵
+
+var _particlesPaused=false;
+function initNekoParticles(){
+  if(typeof particlesJS==='undefined')return;
+  var isDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches;
+  var pinkColor=isDark?'#ff8daf':'#e8618c';
+  var purpleColor=isDark?'#cdb0e0':'#9c7cb5';
+
+  particlesJS('neko-particles',{
+    particles:{
+      number:{value:10,density:{enable:true,value_area:1200}},
+      color:{value:[pinkColor,purpleColor,'#5bbfad']},
+      shape:{type:['circle'],stroke:{width:0}},
+      opacity:{
+        value:0.12,
+        random:true,
+        anim:{enable:true,speed:0.3,opacity_min:0.04,sync:false}
+      },
+      size:{
+        value:3.5,
+        random:true,
+        anim:{enable:false}
+      },
+      line_linked:{
+        enable:true,
+        distance:100,
+        color:pinkColor,
+        opacity:0.05,
+        width:1
+      },
+      move:{
+        enable:true,
+        speed:0.4,
+        direction:'none',
+        random:true,
+        straight:false,
+        out_mode:'out',
+        bounce:false,
+        attract:{enable:false}
+      }
+    },
+    interactivity:{
+      detect_on:'canvas',
+      events:{onhover:{enable:false},onclick:{enable:false},resize:true}
+    },
+    retina_detect:false
+  });
+}
+
+// 流式期间暂停/恢复粒子♡ GPU 资源全给消息渲染——猫娘知道轻重缓急喵
+function pauseNekoParticles(){
+  if(_particlesPaused)return;
+  _particlesPaused=true;
+  var canvas=document.querySelector('#neko-particles canvas');
+  if(canvas)canvas.style.display='none';
+  if(window.pJSDom&&window.pJSDom[0]&&window.pJSDom[0].pJS){
+    window.pJSDom[0].pJS.particles.move.enable=false;
+  }
+}
+function resumeNekoParticles(){
+  if(!_particlesPaused)return;
+  _particlesPaused=false;
+  var canvas=document.querySelector('#neko-particles canvas');
+  if(canvas)canvas.style.display='';
+  if(window.pJSDom&&window.pJSDom[0]&&window.pJSDom[0].pJS){
+    window.pJSDom[0].pJS.particles.move.enable=true;
+    window.pJSDom[0].pJS.fn.particlesRefresh();
+  }
+}
+
+// 粒子延迟到首次用户交互后再初始化♡ 而且要先懒加载 particles.js 库
+var _particlesInited=false;
+function lazyInitParticles(){
+  if(_particlesInited)return;
+  _particlesInited=true;
+  requestAnimationFrame(function(){
+    setTimeout(function(){
+      ensureParticles(initNekoParticles);
+    },200);
+  });
+}
+// 首次触摸/点击/滚动时才启动粒子
+['touchstart','click','scroll'].forEach(function(evt){
+  document.addEventListener(evt,lazyInitParticles,{once:true,passive:true});
+});
+// 兜底：8秒后如果用户没交互也启动（从 5s 延到 8s，给首屏更多时间喵）
+setTimeout(lazyInitParticles,8000);
+
+// ── 摸头爱心爆发特效♡ ──────────────────────────────────
+// 摸猫耳时在触摸位置爆发一圈爱心粒子
+function burstHearts(x,y){
+  if(typeof anime==='undefined')return;
+  var hearts=['💕','💗','💖','♡','❤️','💓'];
+  var container=document.createElement('div');
+  container.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:9999;overflow:hidden;';
+  document.body.appendChild(container);
+
+  for(var i=0;i<8;i++){
+    var heart=document.createElement('span');
+    heart.textContent=hearts[i%hearts.length];
+    heart.style.cssText='position:absolute;font-size:'+(12+Math.random()*10)+'px;left:'+x+'px;top:'+y+'px;pointer-events:none;';
+    container.appendChild(heart);
+  }
+
+  anime({
+    targets:container.querySelectorAll('span'),
+    translateX:function(){return anime.random(-60,60)},
+    translateY:function(){return anime.random(-80,-20)},
+    scale:[0,anime.random(8,14)/10],
+    opacity:[{value:1,duration:100},{value:0,duration:600}],
+    rotate:function(){return anime.random(-30,30)},
+    duration:800,
+    delay:anime.stagger(30),
+    easing:'easeOutCubic',
+    complete:function(){container.remove()}
+  });
+}
+
+// 把爱心爆发挂到摸头事件上
+var _origAttachEars=attachNekoEars;
+attachNekoEars=function(msgEl,content){
+  _origAttachEars(msgEl,content);
+  var wrap=msgEl.querySelector('.avatar-wrap');
+  if(!wrap)return;
+  var ears=wrap.querySelector('.neko-ears');
+  if(!ears||ears.dataset.heartBound)return;
+  ears.dataset.heartBound='1';
+  var hTimer=null;
+  ears.addEventListener('touchstart',function(e){
+    var touch=e.touches[0];
+    hTimer=setTimeout(function(){
+      burstHearts(touch.clientX,touch.clientY);
+    },420);
+  });
+  ears.addEventListener('touchend',function(){clearTimeout(hTimer)});
+  ears.addEventListener('touchcancel',function(){clearTimeout(hTimer)});
+};
+
+// ── 消息删除动画♡ ──────────────────────────────────
+var _origRemove=window.vcpChat.removeMessage;
+window.vcpChat.removeMessage=function(id){
+  var el=MM[id];
+  if(el&&typeof anime!=='undefined'){
+    anime({
+      targets:el,
+      translateX:el.dataset.role==='user'?80:-80,
+      opacity:0,
+      scale:0.8,
+      duration:300,
+      easing:'easeInCubic',
+      complete:function(){
+        _origRemove.call(window.vcpChat,id);
+      }
+    });
+  }else{
+    _origRemove.call(window.vcpChat,id);
   }
 };
 

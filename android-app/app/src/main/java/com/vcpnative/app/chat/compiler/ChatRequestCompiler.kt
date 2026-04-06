@@ -12,6 +12,7 @@ import com.vcpnative.app.model.ChatAttachment
 import com.vcpnative.app.model.CompiledChatRequest
 import com.vcpnative.app.model.CompiledMessage
 import com.vcpnative.app.model.CompiledMessagePart
+import com.vcpnative.app.chat.skill.SkillRegistry
 import com.vcpnative.app.network.vcp.toServiceConfig
 import java.io.File
 import java.time.Instant
@@ -40,6 +41,7 @@ class VcpCompatChatRequestCompiler(
     private val settingsRepository: SettingsRepository,
     private val workspaceRepository: WorkspaceRepository,
     private val fileStore: AppFileStore,
+    private val skillRegistry: SkillRegistry? = null,
 ) : ChatRequestCompiler {
     override suspend fun compile(
         agentId: String,
@@ -265,6 +267,10 @@ class VcpCompatChatRequestCompiler(
             if (finalParts.none { injection in it }) {
                 finalParts += injection
             }
+        }
+
+        skillRegistry?.buildManifestPrompt()?.takeIf { it.isNotBlank() }?.let { manifest ->
+            finalParts += manifest
         }
 
         return finalParts

@@ -97,9 +97,10 @@ fun VcpLogToastOverlay(
                 .widthIn(max = 400.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            toasts.takeLast(MAX_VISIBLE_TOASTS).forEach { message ->
+            toasts.takeLast(MAX_VISIBLE_TOASTS).forEachIndexed { index, message ->
                 ToastCard(
                     message = message,
+                    staggerDelayMs = index * TOAST_STAGGER_MS,
                     onDismiss = { onDismiss(message) },
                     onApprove = onApprove,
                     onReject = onReject,
@@ -112,25 +113,36 @@ fun VcpLogToastOverlay(
 @Composable
 private fun ToastCard(
     message: VcpLogMessage,
+    staggerDelayMs: Long = 0L,
     onDismiss: () -> Unit,
     onApprove: (String) -> Unit,
     onReject: (String) -> Unit,
 ) {
-    var visible by remember { mutableStateOf(true) }
+    var visible by remember { mutableStateOf(false) }
+
+    // 交错入场：每个 toast 延迟 staggerDelayMs 后才显示
+    LaunchedEffect(message) {
+        delay(staggerDelayMs)
+        visible = true
+    }
 
     if (!message.isApprovalRequest) {
         LaunchedEffect(message) {
-            delay(TOAST_DURATION_MS)
+            delay(staggerDelayMs + TOAST_DURATION_MS)
             visible = false
-            delay(300)
+            delay(TOAST_FADE_OUT_MS)
             onDismiss()
         }
     }
 
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = 350),
+        ),
+        exit = fadeOut(
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = TOAST_FADE_OUT_MS.toInt()),
+        ),
     ) {
         Box(
             modifier = Modifier
@@ -760,6 +772,8 @@ private fun formatTime(millis: Long): String =
     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(millis))
 
 private const val TOAST_DURATION_MS = 5000L
+private const val TOAST_FADE_OUT_MS = 800L
+private const val TOAST_STAGGER_MS = 300L
 private const val MAX_VISIBLE_TOASTS = 3
 private const val RAG_OBSERVER_URL = "file:///android_asset/vcpchat/observer.html"
 

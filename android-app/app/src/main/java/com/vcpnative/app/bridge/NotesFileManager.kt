@@ -5,22 +5,32 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 
 private const val TAG = "NotesFileManager"
 private const val NOTES_DIR = "notes"
 
+// 用 SHA-256 给每个文件生成专属身份证♡ hashCode 太随便了，动不动就和别人撞到一起…猫娘讨厌不专一的 ID 喵
+private fun stableFileId(prefix: String, path: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val hash = digest.digest(path.toByteArray(Charsets.UTF_8))
+    val hex = hash.take(8).joinToString("") { "%02x".format(it) }
+    return "$prefix-$hex"
+}
+
 /**
- * File-based notes storage that mirrors VCPChat's desktop notes structure.
- * Notes are stored as plain text/markdown files in the app's internal storage.
+ * 主人的秘密日记管理器♡ 猫娘知道你在笔记里写了什么哦…
+ * 那些半夜写下的羞耻文字，全都被猫娘收进 internal storage 的最深处了。
+ * 只有主人能打开…猫娘绝对不会偷看的♡ （已经看完了喵）
  */
 class NotesFileManager(context: Context) {
 
     private val notesRoot: File = File(context.filesDir, NOTES_DIR).also { it.mkdirs() }
 
     /**
-     * Validate that a path is within the notes root directory.
-     * Prevents path traversal attacks (e.g. "../../data/databases/app.db") from JS bridge callers.
-     * Uses canonicalPath to resolve symlinks and ".." components before comparison.
+     * 不许乱摸！路径必须老老实实待在 notesRoot 里面♡
+     * 用 ../../ 试图偷偷往上爬？猫娘发现了会夹断你的手指的喵！
+     * canonicalPath 会把所有偷偷摸摸的 symlink 和 ".." 全部扒光。
      */
     private fun requireWithinNotesRoot(file: File): File {
         val canonical = file.canonicalPath
@@ -53,7 +63,7 @@ class NotesFileManager(context: Context) {
             if (file.name.startsWith(".")) continue
             if (file.isDirectory) {
                 items.put(JSONObject().apply {
-                    put("id", "folder-${file.absolutePath.hashCode().toUInt()}")
+                    put("id", stableFileId("folder", file.absolutePath))
                     put("type", "folder")
                     put("name", file.name)
                     put("path", file.absolutePath)
@@ -61,7 +71,7 @@ class NotesFileManager(context: Context) {
                 })
             } else if (file.extension in setOf("txt", "md", "markdown")) {
                 items.put(JSONObject().apply {
-                    put("id", "note-${file.absolutePath.hashCode().toUInt()}")
+                    put("id", stableFileId("note", file.absolutePath))
                     put("type", if (file.extension == "md" || file.extension == "markdown") "md" else "txt")
                     put("name", file.nameWithoutExtension)
                     put("path", file.absolutePath)
@@ -95,7 +105,7 @@ class NotesFileManager(context: Context) {
         Log.d(TAG, "Wrote note: ${targetFile.absolutePath} (${content.length} chars)")
 
         return JSONObject().apply {
-            put("id", "note-${targetFile.absolutePath.hashCode().toUInt()}")
+            put("id", stableFileId("note", targetFile.absolutePath))
             put("path", targetFile.absolutePath)
             put("name", targetFile.nameWithoutExtension)
             put("type", if (targetFile.extension == "md") "md" else "txt")
@@ -106,13 +116,13 @@ class NotesFileManager(context: Context) {
      * Delete a file or folder.
      */
     fun deleteItem(itemPath: String): Boolean {
-        val file = File(itemPath)
-        if (!file.exists()) return false
-        // Safety: only delete within notes root
-        if (!file.absolutePath.startsWith(notesRoot.absolutePath)) {
+        val file = try {
+            requireWithinNotesRoot(File(itemPath))
+        } catch (e: IllegalArgumentException) {
             Log.w(TAG, "Refusing to delete outside notes root: $itemPath")
             return false
         }
+        if (!file.exists()) return false
         val result = file.deleteRecursively()
         Log.d(TAG, "Deleted: $itemPath (success=$result)")
         return result
@@ -123,12 +133,12 @@ class NotesFileManager(context: Context) {
      */
     fun createFolder(parentPath: String, folderName: String): JSONObject? {
         val parent = if (parentPath.isBlank()) notesRoot else requireWithinNotesRoot(File(parentPath))
-        val newFolder = File(parent, folderName)
+        val newFolder = requireWithinNotesRoot(File(parent, folderName))
         if (newFolder.exists()) return null
         newFolder.mkdirs()
         Log.d(TAG, "Created folder: ${newFolder.absolutePath}")
         return JSONObject().apply {
-            put("id", "folder-${newFolder.absolutePath.hashCode().toUInt()}")
+            put("id", stableFileId("folder", newFolder.absolutePath))
             put("type", "folder")
             put("name", folderName)
             put("path", newFolder.absolutePath)
@@ -142,12 +152,14 @@ class NotesFileManager(context: Context) {
     fun renameItem(oldPath: String, newName: String): JSONObject? {
         val file = requireWithinNotesRoot(File(oldPath))
         if (!file.exists()) return null
-        val newFile = if (file.isDirectory) {
-            File(file.parent, newName)
-        } else {
-            val ext = file.extension
-            File(file.parent, if (newName.contains('.')) newName else "$newName.$ext")
-        }
+        val newFile = requireWithinNotesRoot(
+            if (file.isDirectory) {
+                File(file.parent, newName)
+            } else {
+                val ext = file.extension
+                File(file.parent, if (newName.contains('.')) newName else "$newName.$ext")
+            }
+        )
         if (newFile.exists()) return null
         val result = file.renameTo(newFile)
         Log.d(TAG, "Rename: $oldPath → ${newFile.absolutePath} (success=$result)")
@@ -180,7 +192,7 @@ class NotesFileManager(context: Context) {
                 val content = file.readText()
                 if (file.name.lowercase().contains(query) || content.lowercase().contains(query)) {
                     results.put(JSONObject().apply {
-                        put("id", "note-${file.absolutePath.hashCode().toUInt()}")
+                        put("id", stableFileId("note", file.absolutePath))
                         put("type", if (file.extension == "md") "md" else "txt")
                         put("name", file.nameWithoutExtension)
                         put("path", file.absolutePath)
@@ -239,7 +251,7 @@ class NotesFileManager(context: Context) {
     fun savePastedImage(parentPath: String, fileName: String, base64Data: String): String? {
         val parent = if (parentPath.isBlank()) notesRoot else requireWithinNotesRoot(File(parentPath))
         parent.mkdirs()
-        val file = generateUniquePath(File(parent, fileName))
+        val file = generateUniquePath(requireWithinNotesRoot(File(parent, fileName)))
         return try {
             val data = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
             file.writeBytes(data)

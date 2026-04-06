@@ -4641,7 +4641,16 @@ private fun buildBrowserHtmlDocument(
                 (function() {
                     var imagePreviewEnabled = $imagePreviewEnabledLiteral;
 
+                    // Track whether we are inside a user-initiated event (click/touch/key).
+                    // This prevents model-generated <script> from calling window.input()
+                    // automatically, which would create a self-triggering message loop.
+                    var _userGesture = false;
+                    ['click', 'touchend', 'keydown'].forEach(function(evt) {
+                        document.addEventListener(evt, function() { _userGesture = true; setTimeout(function() { _userGesture = false; }, 0); }, true);
+                    });
+
                     window.input = function(text) {
+                        if (!_userGesture) { return; }
                         try {
                             location.href = '${VCP_NATIVE_ACTION_SCHEME}://action?${VCP_NATIVE_ACTION_QUERY}=' + encodeURIComponent(text || '');
                         } catch (error) {}

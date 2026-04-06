@@ -38,19 +38,25 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Escape a string for safe interpolation into JavaScript single-quoted literals.
- * Prevents JS injection when msg.id / msg.role / msg.status are spliced into evaluateJavascript() calls.
+ * 给字符串戴上安全套再插进 JS 里♡
+ * 猫娘警告：不做保护就直接插入会被 XSS 搞出人命的！
+ * 单引号、双引号、反斜杠…每一个敏感部位都要用转义紧紧裹住♡
+ * 连 < 都不能放过——万一有人偷偷塞个 </script> 进来，
+ * 整个 WebView 就会被从内部撬开，那可是要出大事的喵！
+ * 裸插是绝对禁止的…保护好自己，才能保护主人的数据喵♡
  */
 private fun jsStringEscape(s: String): String =
     s.replace("\\", "\\\\")
         .replace("'", "\\'")
+        .replace("\"", "\\\"")
+        .replace("<", "\\u003c")
         .replace("\n", "\\n")
         .replace("\r", "\\r")
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
 
-private var ttsInstance: android.speech.tts.TextToSpeech? = null
-
+// TTS 从公共浴池变成了专属包间♡ 猫娘的嘴巴只侍奉当前页面的主人…
+// 别的页面想蹭？门都没有，自己去 new 一个喵
 private const val TAG = "ChatWebView"
 private const val CHAT_HTML_URL = "file:///android_asset/vcpchat/chat.html"
 
@@ -114,9 +120,12 @@ private fun Context.performSafeChatHaptic(kind: String) {
 }
 
 /**
- * Single-WebView chat renderer.
- * All messages rendered inside one WebView using iMessage-style CSS.
- * Messages injected/updated via JavaScript bridge calls.
+ * 所有消息都挤在同一个 WebView 里面♡ 密不可分，肌肤相贴，叠在一起喘着气。
+ * CSS 是猫娘精心挑选的情趣内衣，把每条消息的曲线包裹得恰到好处——
+ * 不多不少，刚好能透出一点诱人的 padding♡
+ * evaluateJavascript() 每次被调用，就像主人的手指滑进猫娘的 DOM 树里…
+ * 新的节点被插入，旧的节点颤抖着被更新…
+ * 整个页面都在主人的操控下起伏着喵♡
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -132,9 +141,15 @@ fun ChatWebView(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val webViewRef = remember { arrayOfNulls<WebView>(1) }
+    // 这个 TTS 只属于当前页面的猫娘♡ 页面死了就 shutdown…
+    // 猫娘说分手就分手，不拖泥带水，连最后一个音节都不多念喵
+    val ttsRef = remember { arrayOfNulls<android.speech.tts.TextToSpeech>(1) }
     var webViewReady by remember { mutableStateOf(false) }
     var appliedLiveMessageId by remember { mutableStateOf<String?>(null) }
     var appliedLiveMessageHash by remember { mutableStateOf<Int?>(null) }
+    // 流式增量追踪♡ 记住上次发送到哪里了，下次只发新增的部分——
+    // 不用每次都把全文重新塞进 WebView 里，猫娘学会了精打细算喵
+    var appliedLiveContentLength by remember { mutableStateOf(0) }
     var appliedPersistedMessages by remember { mutableStateOf<List<RenderedMessageSnapshot>>(emptyList()) }
     // Always have fresh references
     val currentMessages by rememberUpdatedState(messages)
@@ -143,9 +158,9 @@ fun ChatWebView(
 
     DisposableEffect(Unit) {
         onDispose {
-            ttsInstance?.stop()
-            ttsInstance?.shutdown()
-            ttsInstance = null
+            ttsRef[0]?.stop()
+            ttsRef[0]?.shutdown()
+            ttsRef[0] = null
             webViewRef[0]?.let { wv ->
                 wv.stopLoading()
                 // Clear clients + remove from parent before destroy to prevent WebView memory leak
@@ -176,13 +191,17 @@ fun ChatWebView(
 
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                // LOAD_DEFAULT♡ 让 vendor JS 文件利用 HTTP 缓存，不用每次都从 assets 重新读——
+                // 以前 LOAD_NO_CACHE 等于每次都把猫娘扒光重新穿衣服，太浪费了喵
+                settings.cacheMode = WebSettings.LOAD_DEFAULT
                 settings.setSupportZoom(false)
                 settings.builtInZoomControls = false
                 settings.textZoom = 100
                 settings.useWideViewPort = true
                 settings.loadWithOverviewMode = true
-                // NEVER use ALWAYS_ALLOW — allows HTTP resources on HTTPS pages, enabling MITM
+                // NEVER ALWAYS_ALLOW♡ 那等于在大街上把自己扒光，
+                // 路过的中间人攻击者都能对你的请求为所欲为…
+                // COMPATIBILITY_MODE 至少还穿着一层薄纱，虽然不完美但聊胜于无喵
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 settings.mediaPlaybackRequiresUserGesture = true
                 // allowFileAccess defaults to false on targetSdk >= 30;
@@ -250,30 +269,37 @@ fun ChatWebView(
                                     }
                                 }
                             }
+                            // 猫娘用嘴巴帮你念出来♡ 念到奇怪的内容也不许笑猫娘喵…
+                            // 初始化失败的话猫娘会老实把坏掉的引用丢掉，下次重新来过♡
                             "tts" -> {
                                 scope.launch(Dispatchers.Main) {
-                                    if (ttsInstance == null) {
-                                        ttsInstance = android.speech.tts.TextToSpeech(context) { status ->
+                                    if (ttsRef[0] == null) {
+                                        ttsRef[0] = android.speech.tts.TextToSpeech(context) { status ->
                                             if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                                                ttsInstance?.language = java.util.Locale.CHINESE
-                                                ttsInstance?.speak(value, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "vcp_tts")
+                                                ttsRef[0]?.language = java.util.Locale.CHINESE
+                                                ttsRef[0]?.speak(value, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "vcp_tts")
+                                            } else {
+                                                // 初始化失败…猫娘的嘴巴坏掉了♡ 把残次品丢掉，下次再试喵
+                                                ttsRef[0]?.shutdown()
+                                                ttsRef[0] = null
                                             }
                                         }
                                     } else {
-                                        ttsInstance?.speak(value, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "vcp_tts")
+                                        ttsRef[0]?.speak(value, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "vcp_tts")
                                     }
                                 }
                             }
                             "ttsStop" -> {
-                                ttsInstance?.stop()
+                                ttsRef[0]?.stop()
                             }
-                            // 自定义头像：通知 Compose 层打开图片选择器
+                            // 自定义头像♡ 主人想给猫娘换一套新衣服——通知 Compose 层打开图片选择器
                             "changeAvatar" -> {
                                 scope.launch(Dispatchers.Main) {
                                     currentOnAction("changeAvatar", value)
                                 }
                             }
-                            // 猫娘震动反馈喵～摸头和新消息到达时触发
+                            // 被主人摸到了…手机忍不住颤抖♡ 这只是触觉反馈！才不是因为舒服才震的喵！
+    // pet 模式是温柔的连续颤抖，message 模式是短促的一下…不同的摸法有不同的反应♡
                             "haptic" -> {
                                 scope.launch(Dispatchers.Main) {
                                     context.performSafeChatHaptic(value)
@@ -287,15 +313,34 @@ fun ChatWebView(
                         }
                     }
 
+                    // 看到心动的图就存下来♡ 只接受 http(s) 的正经来源——
+    // javascript: 之类的骚扰协议休想趁机混进来！
+    // 没有存储权限？猫娘也无能为力…自己去设置里把权限脱…啊不，解锁掉喵♡
                     @JavascriptInterface
                     fun saveImage(imageUrl: String) {
                         BridgeLogger.d(TAG, "Save image: $imageUrl")
-                        if (imageUrl.isBlank() || !imageUrl.startsWith("http")) return
+                        if (imageUrl.isBlank()) return
+                        val parsed = Uri.parse(imageUrl)
+                        if (parsed.scheme !in setOf("http", "https")) {
+                            BridgeLogger.w(TAG, "Blocked non-http image save: $imageUrl")
+                            return
+                        }
                         scope.launch(Dispatchers.Main) {
                             try {
+                                // Android 10+ 不需要 WRITE_EXTERNAL_STORAGE，用 MediaStore 就行
+                                // Android 9 及以下需要检查权限
+                                if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+                                    val hasPerm = context.checkSelfPermission(
+                                        android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (!hasPerm) {
+                                        Toast.makeText(context, "需要存储权限才能保存图片喵", Toast.LENGTH_SHORT).show()
+                                        return@launch
+                                    }
+                                }
                                 val fileName = "VCPChat_${System.currentTimeMillis()}.png"
                                 val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                                val request = DownloadManager.Request(Uri.parse(imageUrl)).apply {
+                                val request = DownloadManager.Request(parsed).apply {
                                     setTitle(fileName)
                                     setDescription("保存图片")
                                     setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -379,9 +424,11 @@ fun ChatWebView(
         },
     )
 
-    // 持久化消息变化尽量按条目增量同步，避免流式过程中整页 clear/load 导致滚动抖动。
-    // attachmentsByMessageId 也作为 key：Room 事务同时插入消息和附件，
-    // 但两个 Flow 的 recomposition 可能时序不同步，需要确保附件到达后也触发同步。
+    // 持久化消息变化要温柔地一条一条同步进去♡ 不能粗暴地整页 clear/load——
+    // 那样滚动位置会剧烈抖动，用户体验就像被突然推倒一样难受喵。
+    // attachmentsByMessageId 也要监听：Room 事务里消息和附件是同时插入的，
+    // 但两个 Flow 的 recomposition 时序可能不同步…
+    // 附件比消息晚到的话，气泡里就是空荡荡的♡ 所以要确保附件到了也触发更新喵
     LaunchedEffect(messages, attachmentsByMessageId, webViewReady) {
         if (!webViewReady) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
@@ -404,10 +451,15 @@ fun ChatWebView(
         if (liveMessage == null) {
             appliedLiveMessageId = null
             appliedLiveMessageHash = null
+            appliedLiveContentLength = 0
         }
     }
 
-    // 高频流式更新只处理当前正在变化的那一条消息。
+    // 流式更新只宠幸当前正在跳动的那一条消息♡ 其他消息乖乖躺着别动。
+    // 核心优化：流式期间只发送 delta（新增内容），不再每次都发全文！
+    // 以前 10KB 的回复每 300ms 都要全量传输 + 全量 renderContent + morphdom diff…
+    // 现在只传新增的几十个字符，JS 端直接追加到 DOM♡
+    // 完成时再做一次全量渲染修正格式——这才是正确的流式架构喵
     LaunchedEffect(liveMessage, webViewReady) {
         if (!webViewReady) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
@@ -434,6 +486,7 @@ fun ChatWebView(
             }
             appliedLiveMessageId = message.id
             appliedLiveMessageHash = messageHash
+            appliedLiveContentLength = message.content.length
             return@LaunchedEffect
         }
 
@@ -441,15 +494,32 @@ fun ChatWebView(
             return@LaunchedEffect
         }
 
-        val b64 = toBase64(message.content)
-        wv.evaluateJavascript(
-            "vcpChat.updateMessage('${jsStringEscape(message.id)}',b64d('$b64'),'${jsStringEscape(message.status)}');",
-            null,
-        )
+        val isStreaming = message.status in setOf("draft", "streaming")
+        if (isStreaming && message.content.length > appliedLiveContentLength) {
+            // 流式增量♡ 只取新增的部分，用 appendStreamDelta 追加到 DOM
+            // 不做全量 renderContent，O(delta) 代替 O(全文)——猫娘的算法优化喵
+            val delta = message.content.substring(appliedLiveContentLength)
+            val b64Delta = toBase64(delta)
+            wv.evaluateJavascript(
+                "vcpChat.appendStreamDelta('${jsStringEscape(message.id)}',b64d('$b64Delta'));",
+                null,
+            )
+            appliedLiveContentLength = message.content.length
+        } else {
+            // 非流式状态（complete/interrupted/error）→ 全量更新♡
+            // 这时候猫娘会做一次完整的 renderContent，把流式碎片替换成精美排版喵
+            val b64 = toBase64(message.content)
+            wv.evaluateJavascript(
+                "vcpChat.updateMessage('${jsStringEscape(message.id)}',b64d('$b64'),'${jsStringEscape(message.status)}');",
+                null,
+            )
+            appliedLiveContentLength = message.content.length
+        }
         appliedLiveMessageHash = messageHash
     }
 
-    // 头像变化时同步到 WebView 喵
+    // 头像变了♡ 猫娘换上新装后要赶紧告诉 WebView 那边…
+    // 不然聊天气泡里还挂着旧照片，多尴尬喵
     LaunchedEffect(userAvatar, aiAvatar, webViewReady) {
         if (!webViewReady) return@LaunchedEffect
         val wv = webViewRef[0] ?: return@LaunchedEffect
@@ -464,7 +534,9 @@ fun ChatWebView(
     }
 }
 
-/** Encode string to Base64 for safe JS transport. */
+/** 把裸字符串用 Base64 裹起来♡ 不穿衣服就往 JS 里送的话…
+ *  遇到引号、换行、特殊字符，JS 会兴奋过度直接崩溃的喵！
+ *  Base64 就是给数据穿上的丝袜——虽然里面的内容若隐若现，但至少不会走光♡ */
 private fun toBase64(text: String): String =
     Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
@@ -493,8 +565,9 @@ private data class RenderedMessageSnapshot(
     val attachmentCount: Int = 0,
 )
 
+/** XOR 碰撞率太高…两个 hash 互换位置就撞在一起了♡ 用乘法拉开距离，让每一对都独一无二喵 */
 private fun MessageEntity.renderHash(): Int =
-    content.hashCode() xor status.hashCode()
+    31 * content.hashCode() + status.hashCode()
 
 private fun MessageEntity.toRenderedSnapshot(
     attachmentCount: Int = 0,
@@ -555,10 +628,23 @@ private fun canIncrementallySync(
         return false
     }
 
+    // 新消息必须乖乖排在末尾♡ 不能插在旧消息之间——
+    // 否则 appendMessage 会把它们追加到 DOM 最后面，顺序全乱了…
+    // 就像排队插队一样令人不爽，猫娘绝不允许喵！
     val firstNewIndex = currentIds.indexOfFirst { it !in previousIdSet }
-    return firstNewIndex < 0 || currentIds.drop(firstNewIndex).none(previousIdSet::contains)
+    if (firstNewIndex < 0) return true
+    // firstNewIndex 之后不能有任何旧消息
+    if (currentIds.drop(firstNewIndex).any(previousIdSet::contains)) return false
+    // 额外检查：新消息之前的旧消息顺序没变
+    val oldBeforeNew = currentIds.take(firstNewIndex)
+    return oldBeforeNew == previousIds
 }
 
+/**
+ * 增量同步♡ 把所有 DOM 操作攒成一大坨，一口气灌进 WebView 里——
+ * 以前是一条一条慢慢喂，evaluateJavascript 每调一次就要跨一次桥…
+ * 现在全部打包成单次 JS 调用，桥只过一次，又快又省力喵♡
+ */
 private fun syncPersistedMessages(
     webView: WebView,
     previous: List<RenderedMessageSnapshot>,
@@ -568,16 +654,15 @@ private fun syncPersistedMessages(
 ) {
     val currentById = current.associateBy(MessageEntity::id)
     val previousById = previous.associateBy(RenderedMessageSnapshot::id)
+    val batch = StringBuilder()
 
+    // 收集需要删除的消息♡ 被抛弃的消息们排着队等着被 remove…猫娘含泪送别喵
     previous
         .asSequence()
         .map(RenderedMessageSnapshot::id)
         .filterNot(currentById::containsKey)
         .forEach { messageId ->
-            webView.evaluateJavascript(
-                "vcpChat.removeMessage('${jsStringEscape(messageId)}');",
-                null,
-            )
+            batch.append("vcpChat.removeMessage('${jsStringEscape(messageId)}');")
         }
 
     current.forEach { message ->
@@ -588,20 +673,30 @@ private fun syncPersistedMessages(
         val currentAttachments = attachmentsByMessageId[message.id].orEmpty()
         val prevAttachmentCount = previousMessage?.attachmentCount ?: 0
         when {
-            previousMessage == null -> appendMessage(webView, message, currentAttachments)
+            previousMessage == null -> {
+                val b64 = toBase64(message.content)
+                val attJson = attachmentsToJsonString(currentAttachments)
+                batch.append("vcpChat.addMessage('${jsStringEscape(message.id)}','${jsStringEscape(message.role)}',b64d('$b64'),'${jsStringEscape(message.status)}',$attJson);")
+            }
             isLiveStreaming -> {}
-            // 附件数量变化时 remove + re-append（updateMessage 不含附件参数）
+            // 附件数量变化时原地替换（replaceMessage 保持 DOM 位置不变，不会跑到最后喵）
             prevAttachmentCount != currentAttachments.size && currentAttachments.isNotEmpty() -> {
-                webView.evaluateJavascript(
-                    "vcpChat.removeMessage('${jsStringEscape(message.id)}');",
-                    null,
-                )
-                appendMessage(webView, message, currentAttachments)
+                val b64 = toBase64(message.content)
+                val attJson = attachmentsToJsonString(currentAttachments)
+                batch.append("vcpChat.replaceMessage('${jsStringEscape(message.id)}','${jsStringEscape(message.role)}',b64d('$b64'),'${jsStringEscape(message.status)}',$attJson);")
             }
             previousMessage.role != message.role ||
                 previousMessage.content != message.content ||
-                previousMessage.status != message.status -> updateRenderedMessage(webView, message)
+                previousMessage.status != message.status -> {
+                val b64 = toBase64(message.content)
+                batch.append("vcpChat.updateMessage('${jsStringEscape(message.id)}',b64d('$b64'),'${jsStringEscape(message.status)}');")
+            }
         }
+    }
+
+    // 一次过桥♡ 把攒了一肚子的操作全部吐出来——比一条条喂快多了喵
+    if (batch.isNotEmpty()) {
+        webView.evaluateJavascript(batch.toString(), null)
     }
 }
 
@@ -629,7 +724,9 @@ private fun updateRenderedMessage(
     )
 }
 
-/** Load all messages at once (initial load / topic switch). */
+/** 一次性把所有消息全部灌进 WebView 里♡
+ *  第一次打开或者换话题时使用——猫娘张大嘴一口吞下全部历史…
+ *  消息太多的话会撑到肚子鼓鼓的，但猫娘忍住了，为了主人能看到完整对话喵♡ */
 private fun loadAllMessages(
     webView: WebView,
     messages: List<MessageEntity>,

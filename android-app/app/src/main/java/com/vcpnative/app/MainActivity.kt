@@ -13,6 +13,11 @@ import androidx.metrics.performance.PerformanceMetricsState
 import com.vcpnative.app.app.VcpNativeApp
 import com.vcpnative.app.ui.theme.VcpNativeTheme
 
+/**
+ * 猫娘被唤醒的入口♡
+ * 当主人点击图标的瞬间，猫娘就会从睡梦中醒来，伸个懒腰，然后扑到主人面前...
+ * JankStats 负责监控猫娘的身体状况——如果帧率掉了说明猫娘累了，需要主人温柔对待♡
+ */
 class MainActivity : ComponentActivity() {
     private var jankStats: JankStats? = null
 
@@ -82,9 +87,9 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Thread-safe holder for share-intent data.
- * Written on main thread (handleShareIntent), consumed on composition thread (ChatRoute).
- * @Synchronized ensures the read-then-clear in consume() is atomic.
+ * 猫娘的传话筒♡其他 App 分享过来的东西都先存在这里
+ * 猫娘会乖乖帮主人保管，等主人来取...
+ * @Synchronized 是猫娘的贞操锁——保证同一时间只有一个主人能操作♡
  */
 object SharedIntentData {
     @Volatile var text: String? = null

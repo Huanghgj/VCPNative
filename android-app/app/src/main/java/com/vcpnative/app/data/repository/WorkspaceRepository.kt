@@ -99,6 +99,8 @@ interface WorkspaceRepository {
 
     suspend fun deleteTopic(topicId: String)
 
+    suspend fun findMessage(messageId: String): MessageEntity?
+
     suspend fun findMessageAttachment(attachmentId: String): MessageAttachmentEntity?
 
     suspend fun loadMessages(topicId: String): List<MessageEntity>
@@ -318,6 +320,9 @@ class RoomWorkspaceRepository(
         topicDao.delete(topicId)
         syncCompatAgentSnapshot(topic.agentId)
     }
+
+    override suspend fun findMessage(messageId: String): MessageEntity? =
+        messageDao.findById(messageId)
 
     override suspend fun findMessageAttachment(attachmentId: String): MessageAttachmentEntity? =
         messageAttachmentDao.findById(attachmentId)

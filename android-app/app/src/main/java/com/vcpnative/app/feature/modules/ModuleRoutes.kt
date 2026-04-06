@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.NoteAlt
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -44,8 +45,9 @@ object VcpModules {
     val VoiceChat = ModuleDef("voicechat/voicechat.html", "Voice Chat", "Voice", Icons.Outlined.Mic)
     val Themes = ModuleDef("themes/themes.html", "Themes", "Themes", Icons.Outlined.Brush)
     val RagObserver = ModuleDef("ragobserver/RAG_Observer.html", "灵视中心", "RAG", Icons.Outlined.Psychology)
+    val Terminal = ModuleDef("terminal/terminal.html", "终端", "终端", Icons.Outlined.Terminal)
 
-    val all = listOf(Notes, Memo, Forum, Canvas, Translator, Dice, VoiceChat, Themes, RagObserver)
+    val all = listOf(Notes, Memo, Forum, Canvas, Translator, Dice, VoiceChat, Themes, RagObserver, Terminal)
 }
 
 data class ModuleDef(
@@ -84,6 +86,7 @@ fun VcpModuleRoute(
             eventBus = appContainer.eventBus,
             activeRequestTracker = appContainer.activeRequestTracker,
             streamingHttpClient = appContainer.streamingHttpClient,
+            terminalExecutor = appContainer.terminalExecutor,
         )
     }
 

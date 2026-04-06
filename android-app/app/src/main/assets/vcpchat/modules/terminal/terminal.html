@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>VCPNative Terminal</title>
+    <link rel="stylesheet" href="../../vendor/xterm.css">
+    <link rel="stylesheet" href="terminal.css">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1a1520;
+        }
+    </style>
+</head>
+<body>
+    <div id="status-bar">
+        <span id="status-indicator" class="indicator offline"></span>
+        <span id="status-text">Initializing...</span>
+    </div>
+    <div id="terminal"></div>
+
+    <script src="../../vendor/xterm.min.js"></script>
+    <script src="../../vendor/xterm-addon-fit.min.js"></script>
+    <script src="terminal.js"></script>
+</body>
+</html>

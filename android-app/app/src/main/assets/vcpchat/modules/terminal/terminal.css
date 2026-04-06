@@ -1,0 +1,119 @@
+/* VCPNative Terminal Styles */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #1a1520;
+    font-family: 'Courier New', 'Menlo', 'DejaVu Sans Mono', monospace;
+}
+
+/* Status bar */
+#status-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 24px;
+    background: #120e17;
+    border-bottom: 1px solid #2a2035;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    z-index: 10;
+    font-size: 11px;
+    color: #8a7a9a;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#status-bar .indicator {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+
+#status-bar .indicator.online {
+    background: #4ade80;
+    box-shadow: 0 0 4px #4ade8088;
+}
+
+#status-bar .indicator.offline {
+    background: #666;
+}
+
+#status-bar .indicator.error {
+    background: #f87171;
+    box-shadow: 0 0 4px #f8717188;
+}
+
+#status-bar .indicator.python {
+    background: #facc15;
+    box-shadow: 0 0 4px #facc1588;
+}
+
+#status-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Terminal container */
+#terminal {
+    position: fixed;
+    top: 24px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #1a1520;
+}
+
+/* xterm.js overrides */
+.xterm {
+    padding: 4px 2px;
+}
+
+.xterm-viewport {
+    background: #1a1520 !important;
+}
+
+.xterm-screen {
+    background: #1a1520;
+}
+
+/* Custom scrollbar */
+.xterm-viewport::-webkit-scrollbar {
+    width: 5px;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+    background: #e991cf55;
+    border-radius: 3px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+    background: #e991cf99;
+}
+
+/* Selection color */
+.xterm .xterm-selection div {
+    background: #e991cf33 !important;
+}
+
+/* Cursor blink */
+.xterm-cursor-layer .xterm-cursor {
+    background: #e991cf !important;
+}

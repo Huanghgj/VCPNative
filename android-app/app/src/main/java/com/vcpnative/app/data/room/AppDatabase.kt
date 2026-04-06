@@ -258,20 +258,21 @@ interface TopicDao {
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC")
+    // 二级排序 id ASC — 同一毫秒内的消息顺序也要确定喵
+    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC, id ASC")
     fun observeByTopic(topicId: String): Flow<List<MessageEntity>>
 
-    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC")
+    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC, id ASC")
     suspend fun loadByTopic(topicId: String): List<MessageEntity>
 
     /** 分页加载：offset 起始行（跳过最旧的 N 条），limit 每页条数。按时间正序返回。 */
-    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC LIMIT :limit OFFSET :offset")
+    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt ASC, id ASC LIMIT :limit OFFSET :offset")
     suspend fun loadPaged(topicId: String, limit: Int, offset: Int): List<MessageEntity>
 
     @Query("SELECT COUNT(*) FROM messages WHERE topicId = :topicId")
     suspend fun countByTopic(topicId: String): Int
 
-    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt DESC LIMIT :limit")
+    @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt DESC, id DESC LIMIT :limit")
     suspend fun loadRecent(topicId: String, limit: Int): List<MessageEntity>
 
     @Query("SELECT * FROM messages WHERE id = :messageId LIMIT 1")

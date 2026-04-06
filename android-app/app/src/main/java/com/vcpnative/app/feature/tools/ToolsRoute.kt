@@ -31,6 +31,11 @@ import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.NoteAlt
 import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -59,7 +64,13 @@ private val moduleTools = listOf(
     ToolItem("translator", "Translator", Icons.Outlined.Translate),
     ToolItem("dice", "Dice", Icons.Outlined.Casino),
     ToolItem("ragobserver", "灵视", Icons.Outlined.Psychology),
-    // Hidden: canvas, themes, voicechat — Android IPC not yet implemented
+)
+
+// 猫娘的秘密百宝箱～这些模块还在调教中，先让主人看到入口但标记状态喵
+private val experimentalModules = listOf(
+    ToolItem("canvas", "Canvas", Icons.Outlined.Code),
+    ToolItem("themes", "Themes", Icons.Outlined.Brush),
+    ToolItem("voicechat", "Voice", Icons.Outlined.Mic),
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -74,6 +85,7 @@ fun ToolsRoute(
     onOpenBridge: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
     onOpenGroupChat: () -> Unit = {},
+    onOpenSkills: () -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier
@@ -119,6 +131,42 @@ fun ToolsRoute(
 
         item { Spacer(Modifier.height(24.dp)) }
 
+        // 实验性模块——猫娘还在偷偷调教的功能，先给主人看看入口喵
+        item {
+            SectionHeader("Experimental")
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            ) {
+                FlowRow(
+                    modifier = Modifier.padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    experimentalModules.forEach { tool ->
+                        ExperimentalModuleGridItem(
+                            tool = tool,
+                            onClick = { onOpenModule(tool.id) },
+                        )
+                    }
+                }
+                Text(
+                    text = "这些模块的 Android IPC 还没完全适配，部分功能可能不可用喵~",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                )
+            }
+        }
+
+        item { Spacer(Modifier.height(24.dp)) }
+
         // Features section
         item {
             SectionHeader("Features")
@@ -149,6 +197,20 @@ fun ToolsRoute(
                     title = "LLM 桥接器",
                     subtitle = "多服务商直连 (OpenAI/Claude/Gemini/DeepSeek...)",
                     onClick = onOpenBridge,
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                ListRow(
+                    icon = Icons.Outlined.Terminal,
+                    title = "终端",
+                    subtitle = "Shell + Python 环境，安装和调试 Skill 工具",
+                    onClick = { onOpenModule("terminal") },
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                ListRow(
+                    icon = Icons.Outlined.AutoAwesome,
+                    title = "技能图鉴",
+                    subtitle = "查看猫娘掌握的所有技能和调用记录♡",
+                    onClick = onOpenSkills,
                 )
                 HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
                 ListRow(
@@ -245,6 +307,62 @@ private fun ModuleGridItem(
             text = tool.label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/**
+ * 实验性模块的入口卡片——半透明+标签，暗示"还没完全准备好但可以偷偷尝试"喵
+ */
+@Composable
+private fun ExperimentalModuleGridItem(
+    tool: ToolItem,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .width(76.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(contentAlignment = Alignment.TopEnd) {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = tool.icon,
+                    contentDescription = tool.label,
+                    modifier = Modifier.size(26.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+            // "β" 角标——小小的实验标记
+            Box(
+                modifier = Modifier
+                    .size(16.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.tertiary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "β",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = tool.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
