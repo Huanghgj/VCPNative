@@ -680,6 +680,8 @@ class ChatViewModel(
         var lastPersistedContent = ""
         var lastPersistAt = 0L
         var lastUiFlushAt = 0L
+        // 延迟执行的 skill follow-up♡ 在 collect{} 外面执行，避免嵌套 Flow 阻塞
+        var pendingFollowUp: PreparedRequest? = null
 
         suspend fun persistAssistant(status: String, force: Boolean = false) {
             val content = assistantBuffer.toString()
@@ -783,13 +785,12 @@ class ChatViewModel(
                                     requestId = "msg_skill_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
                                     messages = skillFollowUpMessages,
                                 )
-                                submitPreparedRequest(
-                                    PreparedRequest(
-                                        compiledRequest = followUpRequest,
-                                        pendingUserMessage = null,
-                                        isSkillFollowUp = true,
-                                        skillDepth = prepared.skillDepth + 1,
-                                    ),
+                                // 不在 collect{} 内递归调用♡ 延迟到 collect 结束后执行
+                                pendingFollowUp = PreparedRequest(
+                                    compiledRequest = followUpRequest,
+                                    pendingUserMessage = null,
+                                    isSkillFollowUp = true,
+                                    skillDepth = prepared.skillDepth + 1,
                                 )
                                 return@collect
                             }
@@ -827,13 +828,11 @@ class ChatViewModel(
                                     requestId = "msg_skillexec_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
                                     messages = followUpMessages,
                                 )
-                                submitPreparedRequest(
-                                    PreparedRequest(
-                                        compiledRequest = followUpRequest,
-                                        pendingUserMessage = null,
-                                        isSkillFollowUp = true,
-                                        skillDepth = prepared.skillDepth + 1,
-                                    ),
+                                pendingFollowUp = PreparedRequest(
+                                    compiledRequest = followUpRequest,
+                                    pendingUserMessage = null,
+                                    isSkillFollowUp = true,
+                                    skillDepth = prepared.skillDepth + 1,
                                 )
                                 return@collect
                             }
@@ -886,13 +885,11 @@ class ChatViewModel(
                                 requestId = "msg_skillbash_${java.lang.Long.toString(System.currentTimeMillis(), 36)}_${UUID.randomUUID().toString().substring(0, 8)}",
                                 messages = followUpMessages,
                             )
-                            submitPreparedRequest(
-                                PreparedRequest(
-                                    compiledRequest = followUpRequest,
-                                    pendingUserMessage = null,
-                                    isSkillFollowUp = true,
-                                    skillDepth = prepared.skillDepth + 1,
-                                ),
+                            pendingFollowUp = PreparedRequest(
+                                compiledRequest = followUpRequest,
+                                pendingUserMessage = null,
+                                isSkillFollowUp = true,
+                                skillDepth = prepared.skillDepth + 1,
                             )
                             return@collect
                         }
@@ -992,6 +989,13 @@ class ChatViewModel(
                     }
                 }
             }
+        }
+
+        // collect 已结束♡ 如果有延迟的 skill follow-up，现在安全地执行
+        // 不再嵌套在 collect{} 内，避免 Flow 阻塞导致 UI 卡死喵
+        pendingFollowUp?.let { followUp ->
+            pendingFollowUp = null
+            submitPreparedRequest(followUp)
         }
     }
 
