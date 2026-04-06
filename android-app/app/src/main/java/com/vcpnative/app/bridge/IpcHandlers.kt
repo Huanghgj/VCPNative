@@ -409,91 +409,11 @@ fun createIpcDispatcher(
         null
     }
 
-    // ---- Stub handlers for channels not yet implemented ----
-    // These return null so the JS modules don't crash.
-    // Implement incrementally as needed.
-
-    val stubChannels = listOf(
-        // Agent CRUD (write operations)
-        "save-agent-config", "create-agent", "delete-agent",
-        "save-avatar", "save-user-avatar", "select-avatar",
-        "save-avatar-color", "update-agent-config",
-        // Models (remaining stubs)
-        "refresh-models", "get-hot-models",
-        "get-favorite-models", "toggle-favorite-model",
-        // Prompt
-        "load-preset-prompts", "load-preset-content", "select-directory",
-        "get-active-system-prompt", "programmatic-set-prompt-mode",
-        // Orders
-        "save-agent-order", "save-topic-order", "save-combined-item-order",
-        // Topic extras
-        "get-unread-topic-counts", "toggle-topic-lock", "set-topic-unread",
-        "get-original-message-content",
-        // Files
-        "handle-file-paste", "select-files-to-send", "get-file-as-base64",
-        "get-text-content", "handle-text-paste-as-file", "handle-file-drop",
-        // Notes (remaining stubs)
-        "notes:move-items",
-        "save-pasted-image-to-file",
-        "scan-network-notes",
-        "get-cached-network-notes",
-        "open-notes-window", "open-notes-with-content",
-        // VCP Communication
-        "send-to-vcp", "interrupt-vcp-request",
-        // Group Chat
-        "create-agent-group", "get-agent-groups", "get-agent-group-config",
-        "save-agent-group-config", "delete-agent-group", "save-agent-group-avatar",
-        "get-group-topics", "create-new-topic-for-group", "delete-group-topic",
-        "save-group-topic-title", "get-group-chat-history", "save-group-chat-history",
-        "send-group-chat-message", "save-group-topic-order",
-        "search-topics-by-content", "inviteAgentToSpeak",
-        "redo-group-chat-message", "interrupt-group-request",
-        // Export
-        "export-topic-as-markdown",
-        // VCPLog
-        "connect-vcplog", "disconnect-vcplog", "send-vcplog-message",
-        // Image/Text viewer
-        "show-image-context-menu", "open-image-viewer",
-        "display-text-content-in-viewer",
-        // Clipboard (image)
-        "read-image-from-clipboard-main",
-        // Translator
-        "open-translator-window",
-        // Dice
-        "open-dice-window",
-        // TTS
-        "sovits-get-models", "sovits-speak", "sovits-stop",
-        // Emoticons
-        "get-emoticon-library",
-        // Voice
-        "open-voice-chat-window",
-        "start-speech-recognition", "stop-speech-recognition",
-        // Forum / Memo (remaining stubs — open-window is no-op on mobile)
-        "open-forum-window", "open-memo-window",
-        // Canvas
-        "open-canvas-window", "create-new-canvas", "load-canvas-file",
-        "save-canvas-file", "rename-canvas-file", "copy-canvas-file",
-        "delete-canvas-file", "get-latest-canvas-content",
-        "watcher:start", "watcher:stop",
-        // Themes
-        "open-themes-window", "get-themes", "apply-theme",
-        "set-theme", "set-theme-mode", "get-wallpaper-thumbnail",
-        // Global warehouse
-        "get-global-warehouse", "save-global-warehouse",
-        "import-regex-rules",
-        // Flowlock
-        "flowlock-response",
-        // Desktop push
-        "desktop-push", "open-desktop-window",
-        // Admin
-        "open-admin-panel", "open-dev-tools",
-        "toggle-notifications-sidebar",
-    )
-    stubChannels.forEach { channel ->
-        if (!dispatcher.hasHandler(channel)) {
-            dispatcher.register(channel) { null }
-        }
-    }
+    // ── Stub handlers：从 IpcCatalog 统一注册♡ ──
+    // 以前这里是 90+ 行的手写列表…现在全部由 Catalog 管理，
+    // 新增 channel 只需在 IpcCatalog.kt 加一行，这里零改动喵
+    dispatcher.registerStubsFromCatalog()
+    Log.d(TAG, IpcCatalog.stats())
 
     // ── 终端 IPC channels ──
     if (terminalExecutor != null) {
