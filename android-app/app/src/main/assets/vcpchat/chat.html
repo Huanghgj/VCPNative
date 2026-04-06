@@ -944,6 +944,63 @@ var PERF_FLAGS={
   autoRunFullHtml:true
 };
 
+// ── 视界优化器♡ 离屏消息动画冻结 ─────────────────
+// 从桌面端 visibilityOptimizer.js 移植的轻量版♡
+// IntersectionObserver 自动检测哪些消息在屏幕外——
+// 离屏的加上 .vcp-paused（冻结 CSS 动画 + 暂停 video/audio）
+// 回到视野时自动恢复——猫娘只让看得见的东西动起来♡
+var _visObserver=null;
+var _visPendingPause=new Set();
+var _visPendingResume=new Set();
+var _visBatchTimer=null;
+
+function _visScheduleBatch(){
+  if(_visBatchTimer)return;
+  _visBatchTimer=setTimeout(function(){
+    _visBatchTimer=null;
+    // 先暂停（优先释放资源♡）
+    _visPendingPause.forEach(function(el){
+      el.classList.add('vcp-paused');
+      // 暂停 video/audio 媒体元素
+      el.querySelectorAll('video,audio').forEach(function(m){
+        if(!m.paused)try{m.pause();m._vcpWasPaused=true}catch(e){}
+      });
+    });
+    _visPendingPause.clear();
+    // 再恢复
+    _visPendingResume.forEach(function(el){
+      el.classList.remove('vcp-paused');
+      // 恢复被猫娘暂停的媒体
+      el.querySelectorAll('video,audio').forEach(function(m){
+        if(m._vcpWasPaused)try{m.play();m._vcpWasPaused=false}catch(e){}
+      });
+    });
+    _visPendingResume.clear();
+  },50);
+}
+
+function _visObserve(msgEl){
+  if(!_visObserver||!msgEl)return;
+  _visObserver.observe(msgEl);
+}
+
+// 初始化 IntersectionObserver（200px 预加载边距♡）
+if(typeof IntersectionObserver!=='undefined'){
+  _visObserver=new IntersectionObserver(function(entries){
+    entries.forEach(function(entry){
+      var el=entry.target;
+      if(entry.isIntersecting){
+        _visPendingPause.delete(el);
+        _visPendingResume.add(el);
+      }else{
+        _visPendingResume.delete(el);
+        _visPendingPause.add(el);
+      }
+    });
+    _visScheduleBatch();
+  },{root:C,rootMargin:'200px 0px',threshold:0});
+}
+
 // ── 特殊标记正则 ────────────────────────────────
 var RE={
   tool:/<<<\[TOOL_REQUEST\]>>>([\s\S]*?)<<<\[END_TOOL_REQUEST\]>>>/g,
@@ -1680,6 +1737,7 @@ window.vcpChat={
     }
     var d=buildMessageNode({id:id,role:role,content:content,status:status,attachments:attachments});
     C.appendChild(d);MM[id]=d;
+    _visObserve(d); // 视界优化器：开始观察这条消息♡
     toBottom(status!=='streaming');
     // 新消息进来时偷偷预加载 anime.js♡ 这样后续动画就不会空转了喵
     ensureAnime(null);
@@ -1792,6 +1850,7 @@ window.vcpChat={
     var d=MM[id];if(!d)return;
     // 已合并到父气泡的 skill follow-up：只清映射，不删 DOM
     if(_isSkillFollowUpId(id)&&d.dataset.id!==id){delete MM[id];return}
+    if(_visObserver)_visObserver.unobserve(d);
     d.remove();delete MM[id];delete _streamSegments[id];
   },
   // 原地替换消息（附件更新时使用，保持位置不变）
@@ -1808,7 +1867,10 @@ window.vcpChat={
       var m=msgs[i],d=buildMessageNode(m);
       frag.appendChild(d);MM[m.id]=d;
     }
-    C.appendChild(frag);autoScroll=true;C.scrollTop=C.scrollHeight;
+    C.appendChild(frag);
+    // 批量观察所有历史消息♡ appendChild 后元素才在 DOM 中
+    for(var mid in MM){if(MM.hasOwnProperty(mid))_visObserve(MM[mid])}
+    autoScroll=true;C.scrollTop=C.scrollHeight;
   },
   scrollToBottom:function(){autoScroll=true;toBottom(true)},
   setTheme:function(dark){document.documentElement.style.colorScheme=dark?'dark':'light'}
