@@ -1052,6 +1052,95 @@ function md(text){
   return h;
 }
 
+// ── 内容预处理管线♡ ────────────────────────────
+// 从桌面端 contentPipeline.js 移植的统一流水线♡
+// 两种模式：FULL（complete 时用）和 FAST（流式帧用）
+// 核心：protect → transform → restore 三段式♡
+// 先用占位符保护工具结果和代码块，防止 Markdown/特殊块转换破坏它们
+// 转换完成后再把占位符恢复回去——就像猫娘先用保鲜膜把好东西包起来♡
+var _pipeline={
+  _toolPlaceholderId:0,
+  _codePlaceholderId:0,
+
+  // 保护工具结果块 → 替换为占位符♡
+  protectToolResults:function(text){
+    var map=new Map();
+    RE.toolResult.lastIndex=0;
+    if(!RE.toolResult.test(text)){RE.toolResult.lastIndex=0;return {text:text,map:map}}
+    RE.toolResult.lastIndex=0;
+    var self=this;
+    var result=text.replace(RE.toolResult,function(match){
+      var ph='__VCP_TOOL_RESULT_'+self._toolPlaceholderId+'__';
+      map.set(ph,match);
+      self._toolPlaceholderId++;
+      return ph;
+    });
+    RE.toolResult.lastIndex=0;
+    return {text:result,map:map};
+  },
+
+  // 保护代码块 → 替换为占位符♡
+  protectCodeBlocks:function(text){
+    var map=new Map();
+    if(text.indexOf('```')===-1)return {text:text,map:map};
+    var re=/```\w*[\s\S]*?```/g;
+    var self=this;
+    var result=text.replace(re,function(match){
+      var ph='__VCP_CODE_BLOCK_'+self._codePlaceholderId+'__';
+      map.set(ph,match);
+      self._codePlaceholderId++;
+      return ph;
+    });
+    return {text:result,map:map};
+  },
+
+  // 恢复占位符♡
+  restore:function(text,map){
+    if(!map||map.size===0)return text;
+    map.forEach(function(original,ph){
+      if(text.indexOf(ph)!==-1)text=text.split(ph).join(original);
+    });
+    return text;
+  },
+
+  // 「始」「末」安全转义♡
+  escapeMarkers:function(text){
+    if(typeof text!=='string'||text.indexOf('「始」')===-1)return text;
+    return text.replace(/「始」([\s\S]*?)(「末」|$)/g,function(_,c,e){
+      return '「始」'+esc(c)+e;
+    });
+  },
+
+  // ── FULL_RENDER 管线♡ complete 时使用 ──
+  // 顺序协议：protect → 结构修正 → 恢复工具 → 特殊块转换 → 恢复代码块
+  fullRender:function(text,role){
+    if(!text)return '';
+    this._toolPlaceholderId=0;
+    this._codePlaceholderId=0;
+    // 1. 安全转义
+    var t=this.escapeMarkers(text);
+    // 2. 保护工具结果和代码块
+    var toolProtect=this.protectToolResults(t);
+    t=toolProtect.text;
+    var codeProtect=this.protectCodeBlocks(t);
+    t=codeProtect.text;
+    // 3. 恢复工具结果（特殊块转换需要识别它们）
+    t=this.restore(t,toolProtect.map);
+    // 4. 特殊块转换（工具、思维链、日记等）
+    t=processSpecial(t,role);
+    // 5. 恢复代码块
+    t=this.restore(t,codeProtect.map);
+    return t;
+  },
+
+  // ── STREAM_FAST 管线♡ 流式帧使用 ──
+  // 只做最轻量的修正，不做特殊块转换（避免碎片状态下误匹配）
+  streamFast:function(text){
+    if(!text)return '';
+    return this.escapeMarkers(text);
+  }
+};
+
 // ── 特殊内容处理 ────────────────────────────────
 function processSpecial(content,role){
   if(!content)return '';
@@ -1143,8 +1232,8 @@ function processSpecial(content,role){
 
 function renderContent(content,role){
   if(!content)return '';
-  // 先处理特殊标记（工具、思维链、日记等 → 带 onclick 的交互组件）
-  var processed=processSpecial(content,role);
+  // 通过统一管线做 protect → 特殊块转换 → restore♡
+  var processed=_pipeline.fullRender(content,role);
 
   // ★ 优先检测是否已被特殊处理器转换（包含我们的组件 class）
   // 这些组件自带 onclick 事件，不能进 sanitize 否则 onclick 会被 DOMPurify 删除
@@ -1501,15 +1590,10 @@ function findExplicitStablePrefix(text,startOffset){
   return cut;
 }
 
-// 流式快速预处理♡ 只做最轻量的文本修正，不做完整 Markdown 转换
+// 流式快速预处理♡ 委托给 _pipeline.streamFast
 // 对应桌面端 contentPipeline 的 STREAM_FAST 模式
 function streamFastPreprocess(text){
-  if(!text)return '';
-  // 转义「始」「末」标记防 XSS
-  text=text.replace(/「始」([\s\S]*?)(「末」|$)/g,function(_,c,e){
-    return '「始」'+c.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+e;
-  });
-  return text;
+  return _pipeline.streamFast(text);
 }
 
 // ── rAF 批处理♡ ─────────────────────────────────
