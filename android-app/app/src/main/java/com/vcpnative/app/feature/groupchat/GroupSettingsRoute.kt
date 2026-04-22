@@ -63,6 +63,8 @@ fun GroupSettingsRoute(
     var mode by remember { mutableStateOf("sequential") }
     var groupPrompt by remember { mutableStateOf("") }
     var invitePrompt by remember { mutableStateOf("") }
+    var tagMatchMode by remember { mutableStateOf("strict") }
+    var memberTags by remember { mutableStateOf(mapOf<String, String>()) }
     var useUnifiedModel by remember { mutableStateOf(false) }
     var unifiedModel by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
@@ -76,6 +78,8 @@ fun GroupSettingsRoute(
             mode = g.mode
             groupPrompt = g.groupPrompt
             invitePrompt = g.invitePrompt
+            tagMatchMode = g.tagMatchMode
+            memberTags = g.memberTags
             useUnifiedModel = g.useUnifiedModel
             unifiedModel = g.unifiedModel
         }
@@ -142,7 +146,32 @@ fun GroupSettingsRoute(
                 }
             }
 
-            // 成员选择
+            // 标签匹配模式（naturerandom 模式下生效）
+            if (mode == "naturerandom") {
+                var tagModeExpanded by remember { mutableStateOf(false) }
+                val tagModes = listOf("strict" to "严格匹配", "natural" to "自然匹配（概率加权）")
+                ExposedDropdownMenuBox(expanded = tagModeExpanded, onExpandedChange = { tagModeExpanded = it }) {
+                    OutlinedTextField(
+                        value = tagModes.find { it.first == tagMatchMode }?.second ?: tagMatchMode,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("标签匹配模式") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(tagModeExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                    ExposedDropdownMenu(expanded = tagModeExpanded, onDismissRequest = { tagModeExpanded = false }) {
+                        tagModes.forEach { (value, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = { tagMatchMode = value; tagModeExpanded = false },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 成员选择（含标签编辑）
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -174,10 +203,28 @@ fun GroupSettingsRoute(
                                     selectedMembers = if (checked) selectedMembers + agent.id else selectedMembers - agent.id
                                 },
                             )
-                            Text(
-                                text = "${agent.name} (${agent.model})",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${agent.name} (${agent.model})",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                // 标签编辑（仅选中的成员且为 naturerandom 模式）
+                                if (agent.id in selectedMembers && mode == "naturerandom") {
+                                    OutlinedTextField(
+                                        value = memberTags[agent.id] ?: "",
+                                        onValueChange = { newTags ->
+                                            memberTags = memberTags + (agent.id to newTags)
+                                        },
+                                        placeholder = { Text("标签（逗号分隔）") },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 4.dp, top = 4.dp),
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.bodySmall,
+                                        shape = RoundedCornerShape(8.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                     if (allAgents.isEmpty()) {
@@ -235,6 +282,8 @@ fun GroupSettingsRoute(
                                 name = name.trim().ifBlank { current.name },
                                 members = selectedMembers.toList(),
                                 mode = mode,
+                                tagMatchMode = tagMatchMode,
+                                memberTags = memberTags.filterKeys { it in selectedMembers },
                                 groupPrompt = groupPrompt,
                                 invitePrompt = invitePrompt,
                                 useUnifiedModel = useUnifiedModel,

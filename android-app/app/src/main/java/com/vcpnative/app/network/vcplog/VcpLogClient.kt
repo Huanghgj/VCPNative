@@ -66,7 +66,7 @@ class VcpLogClient(
 
     private val _messages = MutableSharedFlow<VcpLogMessage>(extraBufferCapacity = 1024)
     val messages: SharedFlow<VcpLogMessage> = _messages.asSharedFlow()
-    private val pendingMessages = Channel<VcpLogMessage>(capacity = Channel.UNLIMITED)
+    private val pendingMessages = Channel<VcpLogMessage>(capacity = 256)
 
     // 三条 WebSocket 连接
     private var logSocket: WebSocket? = null     // /VCPlog/
@@ -77,6 +77,7 @@ class VcpLogClient(
     private var currentKey: String? = null
     @Volatile private var shouldReconnect = false
     @Volatile private var reconnectAttempt = 0
+    @Volatile private var hasEverConnected = false
     private var reconnectJob: Job? = null
     private var heartbeatJob: Job? = null
     @Volatile private var logConnected = false
@@ -101,6 +102,7 @@ class VcpLogClient(
             currentKey = wsKey
             shouldReconnect = true
             reconnectAttempt = 0
+            hasEverConnected = false
         }
         doConnect(wsUrl, wsKey)
     }
@@ -184,6 +186,7 @@ class VcpLogClient(
         override fun onOpen(webSocket: WebSocket, response: Response) {
             Log.d(TAG, "$tag WebSocket connected")
             if (isLogChannel) logConnected = true else infoConnected = true
+            hasEverConnected = true
             reconnectAttempt = 0
             updateStatus()
         }
@@ -208,7 +211,7 @@ class VcpLogClient(
             Log.w(TAG, "$tag WebSocket failure: ${t.message}")
             if (isLogChannel) logConnected = false else infoConnected = false
             updateStatus()
-            if (!logConnected && !infoConnected) scheduleReconnect()
+            if (!logConnected && !infoConnected) scheduleReconnect(t)
         }
     }
 
@@ -216,6 +219,7 @@ class VcpLogClient(
         override fun onOpen(webSocket: WebSocket, response: Response) {
             Log.d(TAG, "VCP-Mobile WebSocket connected")
             mobileConnected = true
+            hasEverConnected = true
             reconnectAttempt = 0
             updateStatus()
             // Start heartbeat to keep mobile channel alive
@@ -252,13 +256,19 @@ class VcpLogClient(
             mobileConnected = false
             heartbeatJob?.cancel()
             updateStatus()
-            if (!logConnected && !infoConnected && !mobileConnected) scheduleReconnect()
+            if (!logConnected && !infoConnected && !mobileConnected) scheduleReconnect(t)
         }
     }
 
-    private fun scheduleReconnect() {
+    private fun scheduleReconnect(cause: Throwable? = null) {
         synchronized(stateLock) {
             if (!shouldReconnect) return
+            // 从未成功连接过 + 连接被拒/不可达 → 服务器没开，不值得重连喵
+            if (!hasEverConnected && cause != null && isUnreachableError(cause)) {
+                Log.w(TAG, "Server unreachable (${cause.message}), not retrying")
+                _status.value = VcpLogConnectionStatus.Error
+                return
+            }
             val url = currentUrl ?: return
             val key = currentKey ?: return
             reconnectAttempt++
@@ -279,6 +289,12 @@ class VcpLogClient(
                 if (shouldReconnect) doConnect(url, key)
             }
         }
+    }
+
+    private fun isUnreachableError(t: Throwable): Boolean {
+        return t is java.net.ConnectException ||
+            t is java.net.NoRouteToHostException ||
+            t is java.net.UnknownHostException
     }
 
     // ── 消息解析（两条通道共用） ────────────────────

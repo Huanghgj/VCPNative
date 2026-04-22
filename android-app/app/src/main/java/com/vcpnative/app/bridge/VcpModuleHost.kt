@@ -59,15 +59,7 @@ fun VcpModuleHost(
         onDispose {
             ipcDispatcher.eventEmitter = null
             webViewRef[0]?.let { wv ->
-                wv.stopLoading()
-                // Must clear clients before destroy to break reference cycles → prevents memory leak
-                wv.webChromeClient = null
-                wv.webViewClient = WebViewClient()
-                wv.removeJavascriptInterface(BRIDGE_NAME)
-                wv.loadUrl("about:blank")
-                // Must remove from parent before destroy, otherwise the parent holds a dangling ref
-                (wv.parent as? ViewGroup)?.removeView(wv)
-                wv.destroy()
+                wv.safeDestroy(jsInterfaceName = BRIDGE_NAME)
                 webViewRef[0] = null
             }
         }
@@ -208,30 +200,11 @@ private fun createModuleWebView(
             ) {
                 super.onPageStarted(view, url, favicon)
                 BridgeLogger.d(modulePath, "Page started: $url")
-                // Inject bridge shim as early as possible (before DOMContentLoaded).
+                // shouldInterceptRequest 已注入 shim + CSS + viewport 到 HTML <head>，
+                // 这里只做 shim 的 evaluateJavascript 作为安全网（非 asset HTML 页面）
                 view.evaluateJavascript(bridgeShimJs, null)
                 view.evaluateJavascript("window.__vcpPlatform = 'android';", null)
-
-                // Inject mobile viewport meta + CSS overrides
-                val escapedCss = mobileOverrideCss
-                    .replace("\\", "\\\\")
-                    .replace("'", "\\'")
-                    .replace("\n", "\\n")
-                view.evaluateJavascript("""
-                    (function(){
-                        if(!document.querySelector('meta[name=viewport]')){
-                            var m=document.createElement('meta');
-                            m.name='viewport';
-                            m.content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no';
-                            (document.head||document.documentElement).appendChild(m);
-                        }
-                        var s=document.createElement('style');
-                        s.id='vcp-mobile-overrides';
-                        s.textContent='$escapedCss';
-                        (document.head||document.documentElement).appendChild(s);
-                    })();
-                """.trimIndent(), null)
-                BridgeLogger.d(modulePath, "Bridge shim + mobile overrides injected")
+                BridgeLogger.d(modulePath, "Bridge shim injected via onPageStarted")
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
@@ -250,7 +223,7 @@ private fun createModuleWebView(
                     android.content.res.Configuration.UI_MODE_NIGHT_YES
                 val theme = if (isDark) "dark" else "light"
                 view.evaluateJavascript(
-                    "if(window.__vcpBridge){window.__vcpBridge.emit('theme-updated','\"$theme\"');}",
+                    "if(window.__vcpBridge){window.__vcpBridge.emit('theme-updated',${JSONObject.quote(theme)});}",
                     null,
                 )
             }

@@ -90,11 +90,16 @@ fun VcpNativeApp(
     LaunchedEffect(vcpLogClient) {
         vcpLogClient.messages.collect { message ->
             allNotifications.add(message)
-            toasts.add(message)
-            // 限制列表大小：猫娘的记忆容量有限，太多就会溢出...变得奇怪♡
+            // 只有审批请求才弹 Toast 打断用户——其他日志静默放进通知中心喵
+            if (message.isApprovalRequest) {
+                toasts.add(message)
+            }
+            // 限制列表大小喵
             if (allNotifications.size > 200) {
-                val excess = allNotifications.size - 200
-                allNotifications.subList(0, excess).clear()
+                allNotifications.removeRange(0, allNotifications.size - 200)
+            }
+            if (toasts.size > 20) {
+                toasts.removeRange(0, toasts.size - 20)
             }
         }
     }

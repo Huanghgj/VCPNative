@@ -56,20 +56,17 @@ object ContextFolder {
 
         val systemMessages = mutableListOf<CompiledMessage>()
         val nonSystemEntries = mutableListOf<CompiledEntry>()
+        var approxCharsBefore = 0
 
+        // 单次遍历：同时分离 system/nonSystem 并累加字符数，省 CPU 喵
         messages.forEach { message ->
             if (message.role == "system") {
                 systemMessages += message
             } else {
-                nonSystemEntries += CompiledEntry(
-                    message = message,
-                    details = extractContentDetails(message),
-                )
+                val details = extractContentDetails(message)
+                nonSystemEntries += CompiledEntry(message = message, details = details)
+                approxCharsBefore += details.approxChars + buildSpeakerLabel(message).length + 12
             }
-        }
-
-        val approxCharsBefore = nonSystemEntries.sumOf { entry ->
-            entry.details.approxChars + buildSpeakerLabel(entry.message).length + 12
         }
 
         if (nonSystemEntries.size <= normalized.keepRecentMessages) {
@@ -84,8 +81,9 @@ object ContextFolder {
             )
         }
 
-        val olderEntries = nonSystemEntries.dropLast(normalized.keepRecentMessages)
-        val recentEntries = nonSystemEntries.takeLast(normalized.keepRecentMessages)
+        val splitAt = nonSystemEntries.size - normalized.keepRecentMessages
+        val olderEntries = nonSystemEntries.subList(0, splitAt)
+        val recentEntries = nonSystemEntries.subList(splitAt, nonSystemEntries.size)
 
         // Use token-aware threshold when agent's context limit is known
         // Rough estimate: ~4 chars per token, leave 25% headroom for system prompt + response
@@ -133,9 +131,9 @@ object ContextFolder {
             addAll(recentEntries.map { it.message })
         }
 
-        val approxCharsAfter = summaryText.length + recentEntries.sumOf { entry ->
-            entry.details.approxChars + buildSpeakerLabel(entry.message).length + 12
-        }
+        // 用减法代替重新遍历——recentChars = approxCharsBefore - olderChars
+        val olderChars = olderEntries.sumOf { it.details.approxChars + buildSpeakerLabel(it.message).length + 12 }
+        val approxCharsAfter = summaryText.length + (approxCharsBefore - olderChars)
 
         return ContextFoldingResult(
             messages = foldedMessages,
@@ -260,8 +258,10 @@ object ContextFolder {
         }
     }
 
+    private val WHITESPACE_RE = "\\s+".toRegex()
+
     private fun normalizeWhitespace(text: String): String =
-        text.replace("\\s+".toRegex(), " ").trim()
+        text.replace(WHITESPACE_RE, " ").trim()
 
     private fun truncateText(
         text: String,

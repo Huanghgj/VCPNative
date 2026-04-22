@@ -846,9 +846,9 @@ private fun AppSettings.toContextFoldingOptions(
 
 private val compiledRegexCache: MutableMap<String, Regex?> =
     java.util.Collections.synchronizedMap(
-        object : LinkedHashMap<String, Regex?>(64, 0.75f, true) {
+        object : LinkedHashMap<String, Regex?>(128, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Regex?>?): Boolean =
-                size > 128
+                size > 192
         },
     )
 private val REGEX_LITERAL_PATTERN = Regex("^/(.+)/([a-zA-Z]*)$")

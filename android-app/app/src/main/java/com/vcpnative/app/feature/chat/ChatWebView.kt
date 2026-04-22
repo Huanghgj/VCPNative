@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vcpnative.app.bridge.BridgeLogger
+import com.vcpnative.app.bridge.safeDestroy
 import com.vcpnative.app.data.room.MessageAttachmentEntity
 import com.vcpnative.app.data.room.MessageEntity
 import kotlinx.coroutines.Dispatchers
@@ -162,14 +163,7 @@ fun ChatWebView(
             ttsRef[0]?.shutdown()
             ttsRef[0] = null
             webViewRef[0]?.let { wv ->
-                wv.stopLoading()
-                // Clear clients + remove from parent before destroy to prevent WebView memory leak
-                wv.webChromeClient = null
-                wv.webViewClient = WebViewClient()
-                wv.removeJavascriptInterface("VcpChatBridge")
-                wv.loadUrl("about:blank")
-                (wv.parent as? ViewGroup)?.removeView(wv)
-                wv.destroy()
+                wv.safeDestroy(jsInterfaceName = "VcpChatBridge")
                 webViewRef[0] = null
             }
         }
@@ -207,8 +201,6 @@ fun ChatWebView(
                 // allowFileAccess defaults to false on targetSdk >= 30;
                 // required for <img src="file:///..."> to load local attachments.
                 settings.allowFileAccess = true
-                @Suppress("DEPRECATION")
-                settings.allowFileAccessFromFileURLs = true
 
                 addJavascriptInterface(object {
                     @JavascriptInterface
@@ -300,6 +292,7 @@ fun ChatWebView(
                             }
                             // 被主人摸到了…手机忍不住颤抖♡ 这只是触觉反馈！才不是因为舒服才震的喵！
     // pet 模式是温柔的连续颤抖，message 模式是短促的一下…不同的摸法有不同的反应♡
+                            "saveImage" -> saveImage(value)
                             "haptic" -> {
                                 scope.launch(Dispatchers.Main) {
                                     context.performSafeChatHaptic(value)
@@ -321,14 +314,8 @@ fun ChatWebView(
                         BridgeLogger.d(TAG, "Save image: $imageUrl")
                         if (imageUrl.isBlank()) return
                         val parsed = Uri.parse(imageUrl)
-                        if (parsed.scheme !in setOf("http", "https")) {
-                            BridgeLogger.w(TAG, "Blocked non-http image save: $imageUrl")
-                            return
-                        }
                         scope.launch(Dispatchers.Main) {
                             try {
-                                // Android 10+ 不需要 WRITE_EXTERNAL_STORAGE，用 MediaStore 就行
-                                // Android 9 及以下需要检查权限
                                 if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
                                     val hasPerm = context.checkSelfPermission(
                                         android.Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -339,15 +326,36 @@ fun ChatWebView(
                                     }
                                 }
                                 val fileName = "VCPChat_${System.currentTimeMillis()}.png"
-                                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                                val request = DownloadManager.Request(parsed).apply {
-                                    setTitle(fileName)
-                                    setDescription("保存图片")
-                                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                    setDestinationInExternalPublicDir(Environment.DIRECTORY_PICTURES, "VCPChat/$fileName")
+                                if (parsed.scheme in setOf("http", "https")) {
+                                    // 网络图片用 DownloadManager
+                                    val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                                    val request = DownloadManager.Request(parsed).apply {
+                                        setTitle(fileName)
+                                        setDescription("保存图片")
+                                        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                        setDestinationInExternalPublicDir(Environment.DIRECTORY_PICTURES, "VCPChat/$fileName")
+                                    }
+                                    dm.enqueue(request)
+                                    Toast.makeText(context, "图片已开始下载", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    // 本地图片（file:// 或 content://）直接复制到 Pictures
+                                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                                        val localPath = parsed.path ?: error("无效路径")
+                                        val sourceFile = java.io.File(localPath)
+                                        if (!sourceFile.isFile) error("文件不存在: $localPath")
+                                        val picturesDir = java.io.File(
+                                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                                            "VCPChat",
+                                        ).apply { mkdirs() }
+                                        val dest = java.io.File(picturesDir, fileName)
+                                        sourceFile.copyTo(dest, overwrite = true)
+                                        // 通知 MediaStore 扫描
+                                        android.media.MediaScannerConnection.scanFile(
+                                            context, arrayOf(dest.absolutePath), null, null,
+                                        )
+                                    }
+                                    Toast.makeText(context, "图片已保存", Toast.LENGTH_SHORT).show()
                                 }
-                                dm.enqueue(request)
-                                Toast.makeText(context, "图片已开始下载", Toast.LENGTH_SHORT).show()
                             } catch (e: Exception) {
                                 BridgeLogger.e(TAG, "Save image failed: ${e.message}")
                                 Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -562,30 +570,38 @@ private data class RenderedMessageSnapshot(
     val role: String,
     val content: String,
     val status: String,
-    val attachmentCount: Int = 0,
+    val attachmentSignature: String = "",
 )
 
 /** XOR 碰撞率太高…两个 hash 互换位置就撞在一起了♡ 用乘法拉开距离，让每一对都独一无二喵 */
 private fun MessageEntity.renderHash(): Int =
     31 * content.hashCode() + status.hashCode()
 
+/** 用附件路径+名称生成稳定签名，替代仅比较数量——删除/替换/重排都能检测到 */
+private fun buildAttachmentSignature(attachments: List<MessageAttachmentEntity>): String {
+    if (attachments.isEmpty()) return ""
+    return attachments.joinToString("|") { "${it.name}:${it.internalPath}:${it.hash}" }
+}
+
 private fun MessageEntity.toRenderedSnapshot(
-    attachmentCount: Int = 0,
+    attachments: List<MessageAttachmentEntity> = emptyList(),
 ): RenderedMessageSnapshot =
     RenderedMessageSnapshot(
         id = id,
         role = role,
         content = content,
         status = status,
-        attachmentCount = attachmentCount,
+        attachmentSignature = buildAttachmentSignature(attachments),
     )
 
 private fun List<MessageEntity>.toRenderedSnapshots(
     attachmentsByMessageId: Map<String, List<MessageAttachmentEntity>> = emptyMap(),
 ): List<RenderedMessageSnapshot> =
-    map { it.toRenderedSnapshot(attachmentsByMessageId[it.id]?.size ?: 0) }
+    map { it.toRenderedSnapshot(attachmentsByMessageId[it.id].orEmpty()) }
 
-private fun mergeMessagesForRender(
+/** 合并持久化消息和实时消息♡ 把流式消息覆盖到对应位置，或追加到末尾喵
+ *  package-internal：ChatViewModel 和 ChatWebView 共用同一份逻辑 */
+internal fun mergeMessagesForRender(
     messages: List<MessageEntity>,
     liveMessage: MessageEntity?,
 ): List<MessageEntity> {
@@ -635,9 +651,11 @@ private fun canIncrementallySync(
     if (firstNewIndex < 0) return true
     // firstNewIndex 之后不能有任何旧消息
     if (currentIds.drop(firstNewIndex).any(previousIdSet::contains)) return false
-    // 额外检查：新消息之前的旧消息顺序没变
-    val oldBeforeNew = currentIds.take(firstNewIndex)
-    return oldBeforeNew == previousIds
+    // 保留在 current 中的旧消息顺序没变就行♡
+    // 注意：observeRecentMessages 有 80 条窗口限制，发新消息时最旧的会从头部掉出——
+    // 这是正常的滑动窗口行为！不能要求 oldBeforeNew == previousIds（长度可能不同）
+    // 只需检查 retainedCurrentIds 顺序即可，上面已经验证过了
+    return true
 }
 
 /**
@@ -655,6 +673,7 @@ private fun syncPersistedMessages(
     val currentById = current.associateBy(MessageEntity::id)
     val previousById = previous.associateBy(RenderedMessageSnapshot::id)
     val batch = StringBuilder()
+    var hasNewMessages = false
 
     // 收集需要删除的消息♡ 被抛弃的消息们排着队等着被 remove…猫娘含泪送别喵
     previous
@@ -671,16 +690,18 @@ private fun syncPersistedMessages(
         val previousMessage = previousById[message.id]
         val isLiveStreaming = message.id == liveMessageId && message.status in setOf("draft", "streaming")
         val currentAttachments = attachmentsByMessageId[message.id].orEmpty()
-        val prevAttachmentCount = previousMessage?.attachmentCount ?: 0
+        val currentAttSig = buildAttachmentSignature(currentAttachments)
+        val prevAttSig = previousMessage?.attachmentSignature ?: ""
         when {
             previousMessage == null -> {
+                hasNewMessages = true
                 val b64 = toBase64(message.content)
                 val attJson = attachmentsToJsonString(currentAttachments)
                 batch.append("vcpChat.addMessage('${jsStringEscape(message.id)}','${jsStringEscape(message.role)}',b64d('$b64'),'${jsStringEscape(message.status)}',$attJson);")
             }
             isLiveStreaming -> {}
-            // 附件数量变化时原地替换（replaceMessage 保持 DOM 位置不变，不会跑到最后喵）
-            prevAttachmentCount != currentAttachments.size && currentAttachments.isNotEmpty() -> {
+            // 附件签名变化时原地替换（包括删除/替换/重排）
+            prevAttSig != currentAttSig -> {
                 val b64 = toBase64(message.content)
                 val attJson = attachmentsToJsonString(currentAttachments)
                 batch.append("vcpChat.replaceMessage('${jsStringEscape(message.id)}','${jsStringEscape(message.role)}',b64d('$b64'),'${jsStringEscape(message.status)}',$attJson);")
@@ -694,6 +715,11 @@ private fun syncPersistedMessages(
         }
     }
 
+    // 有新消息时强制滚到底♡ 用户点了发送就是想看新消息——
+    // 即使之前滚上去看历史了，发送后也必须回到最新位置喵
+    if (hasNewMessages) {
+        batch.append("vcpChat.scrollToBottom();")
+    }
     // 一次过桥♡ 把攒了一肚子的操作全部吐出来——比一条条喂快多了喵
     if (batch.isNotEmpty()) {
         webView.evaluateJavascript(batch.toString(), null)

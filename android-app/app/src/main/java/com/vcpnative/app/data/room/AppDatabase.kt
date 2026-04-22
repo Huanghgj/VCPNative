@@ -6,6 +6,7 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
 import androidx.room.Entity
+import androidx.room.Fts4
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.Insert
@@ -93,6 +94,14 @@ data class MessageEntity(
     val status: String,
     val createdAt: Long,
     val updatedAt: Long,
+)
+
+/** FTS4 全文搜索虚拟表——外部内容模式，数据来自 messages 表。
+ *  搜索时走 FTS 索引，比 LIKE '%..%' 快几十倍喵 */
+@Fts4(contentEntity = MessageEntity::class, tokenizer = "unicode61")
+@Entity(tableName = "messages_fts")
+data class MessageFtsEntity(
+    val content: String,
 )
 
 @Entity(
@@ -209,13 +218,12 @@ interface TopicDao {
             topics.updatedAt AS topic_updatedAt,
             topics.extra_json AS topic_extra_json
         FROM agents
-        INNER JOIN topics ON topics.id = (
-            SELECT latest_topics.id
-            FROM topics AS latest_topics
-            WHERE latest_topics.agentId = agents.id
-            ORDER BY latest_topics.updatedAt DESC
-            LIMIT 1
-        )
+        INNER JOIN topics ON topics.agentId = agents.id
+        INNER JOIN (
+            SELECT agentId, MAX(updatedAt) AS maxUpdatedAt
+            FROM topics
+            GROUP BY agentId
+        ) AS latest ON latest.agentId = topics.agentId AND latest.maxUpdatedAt = topics.updatedAt
         ORDER BY topics.updatedAt DESC
         LIMIT :limit
         """,
@@ -275,6 +283,16 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt DESC, id DESC LIMIT :limit")
     suspend fun loadRecent(topicId: String, limit: Int): List<MessageEntity>
 
+    /** 响应式观察最近 N 条消息（按时间正序返回）。用于 UI 展示，避免加载全部历史。 */
+    @Query(
+        """
+        SELECT * FROM (
+            SELECT * FROM messages WHERE topicId = :topicId ORDER BY createdAt DESC, id DESC LIMIT :limit
+        ) ORDER BY createdAt ASC, id ASC
+        """,
+    )
+    fun observeRecent(topicId: String, limit: Int): Flow<List<MessageEntity>>
+
     @Query("SELECT * FROM messages WHERE id = :messageId LIMIT 1")
     suspend fun findById(messageId: String): MessageEntity?
 
@@ -311,31 +329,30 @@ interface MessageDao {
 
     /**
      * 全文搜索：在指定 agent 的所有 topic 消息中搜索内容。
-     * 使用 LIKE — 对小数据集足够快；大规模数据请考虑 FTS 虚拟表。
-     * 注意：LIKE 的 '%' 通配符由 Room 参数绑定注入，不存在 SQL 注入风险，
-     * 但用户输入的 '%' 和 '_' 会被当作 LIKE 通配符匹配（属于功能而非漏洞）。
+     * 使用 FTS4 索引，比 LIKE '%..%' 全表扫描快几十倍喵。
      */
     @Query(
         """
         SELECT DISTINCT messages.topicId
         FROM messages
         INNER JOIN topics ON topics.id = messages.topicId
+        INNER JOIN messages_fts ON messages_fts.docid = messages.rowid
         WHERE topics.agentId = :agentId
-          AND messages.content LIKE '%' || :query || '%'
+          AND messages_fts.content MATCH :query
         """,
     )
     suspend fun searchTopicIds(agentId: String, query: String): List<String>
 
     /**
      * 全文搜索：跨所有 agent 搜索消息内容，返回匹配的消息。
-     * LIMIT 防止一次性加载过多结果导致 OOM。
+     * 使用 FTS4 索引 + LIMIT 防止 OOM 喵。
      */
     @Query(
         """
         SELECT messages.*
         FROM messages
-        INNER JOIN topics ON topics.id = messages.topicId
-        WHERE messages.content LIKE '%' || :query || '%'
+        INNER JOIN messages_fts ON messages_fts.docid = messages.rowid
+        WHERE messages_fts.content MATCH :query
         ORDER BY messages.createdAt DESC
         LIMIT :limit
         """,
@@ -366,6 +383,16 @@ interface MessageAttachmentDao {
         """,
     )
     suspend fun loadByTopic(topicId: String): List<MessageAttachmentEntity>
+
+    /** 观察指定消息 ID 集合的附件（配合 UI 消息窗口使用，避免全话题查询） */
+    @Query(
+        """
+        SELECT * FROM message_attachments
+        WHERE messageId IN (:messageIds)
+        ORDER BY attachmentOrder ASC
+        """,
+    )
+    fun observeByMessageIds(messageIds: List<String>): Flow<List<MessageAttachmentEntity>>
 
     @Query("SELECT * FROM message_attachments WHERE id = :attachmentId LIMIT 1")
     suspend fun findById(attachmentId: String): MessageAttachmentEntity?
@@ -401,10 +428,11 @@ interface RegexRuleDao {
         AgentEntity::class,
         TopicEntity::class,
         MessageEntity::class,
+        MessageFtsEntity::class,
         MessageAttachmentEntity::class,
         RegexRuleEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -526,6 +554,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** FTS4 全文搜索索引——让搜索从全表 LIKE 扫描变成索引查找，快几十倍喵 */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 创建 FTS4 外部内容虚拟表
+                db.execSQL(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS `messages_fts`
+                    USING FTS4(`content`, content=`messages`, tokenize=unicode61)
+                    """.trimIndent(),
+                )
+                // 用现有消息填充 FTS 索引
+                db.execSQL("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+                // 触发器：INSERT/UPDATE/DELETE 时自动同步 FTS
+                db.execSQL(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+                        INSERT INTO messages_fts(docid, content) VALUES(new.rowid, new.content);
+                    END
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS messages_fts_delete BEFORE DELETE ON messages BEGIN
+                        DELETE FROM messages_fts WHERE docid = old.rowid;
+                    END
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS messages_fts_update BEFORE UPDATE OF content ON messages BEGIN
+                        DELETE FROM messages_fts WHERE docid = old.rowid;
+                        INSERT INTO messages_fts(docid, content) VALUES(new.rowid, new.content);
+                    END
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context,
@@ -542,6 +608,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_7_8,
                     MIGRATION_8_9,
                     MIGRATION_9_10,
+                    MIGRATION_10_11,
                 )
                 .build()
     }

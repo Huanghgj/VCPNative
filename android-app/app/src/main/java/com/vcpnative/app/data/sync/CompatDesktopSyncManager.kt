@@ -80,6 +80,33 @@ class CompatDesktopSyncManager(
             syncRegexRules()
             syncTopicHistories()
             syncAppSettings()
+            pruneFingerprints()
+        }
+    }
+
+    /**
+     * Remove fingerprint entries whose agent directories no longer exist on disk.
+     * Belt-and-suspenders: individual sync methods already clean up per-scan,
+     * but this catches any stragglers from edge cases (e.g. directory deleted mid-scan).
+     */
+    private fun pruneFingerprints() {
+        val agentsDir = fileStore.compatAgentsDir()
+        val existingAgentIds = if (agentsDir.isDirectory) {
+            agentsDir.listFiles().orEmpty()
+                .filter(File::isDirectory)
+                .mapTo(mutableSetOf()) { it.name }
+        } else {
+            emptySet()
+        }
+
+        configFingerprints.keys.removeAll { path ->
+            existingAgentIds.none { agentId -> "/$agentId/" in path }
+        }
+        historyFingerprints.keys.removeAll { path ->
+            existingAgentIds.none { agentId -> "/$agentId/" in path }
+        }
+        regexFingerprints.keys.removeAll { agentId ->
+            agentId !in existingAgentIds
         }
     }
 

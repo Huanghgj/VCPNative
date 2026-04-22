@@ -24,11 +24,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DividerDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -56,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import com.vcpnative.app.app.AppContainer
 import com.vcpnative.app.data.groupchat.AgentGroup
 import com.vcpnative.app.data.groupchat.GroupStreamEvent
+import com.vcpnative.app.data.room.AgentEntity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -86,10 +90,17 @@ fun GroupChatRoute(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var sendJob by remember { mutableStateOf<Job?>(null) }
+    var memberAgents by remember { mutableStateOf<List<AgentEntity>>(emptyList()) }
+    var showInviteMenu by remember { mutableStateOf(false) }
 
     // 加载历史
     LaunchedEffect(groupId, topicId) {
-        group = appContainer.groupChatRepository.getGroupConfig(groupId)
+        val g = appContainer.groupChatRepository.getGroupConfig(groupId)
+        group = g
+        // 预加载成员信息（invite_only 模式需要）
+        if (g != null) {
+            memberAgents = g.members.mapNotNull { appContainer.workspaceRepository.findAgent(it) }
+        }
         val history = appContainer.groupChatRepository.loadHistory(groupId, topicId)
         messages.clear()
         for (i in 0 until history.length()) {
@@ -136,6 +147,91 @@ fun GroupChatRoute(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                // invite_only 模式：邀请成员发言按钮
+                if (group?.mode == "invite_only" && !isSending) {
+                    Box {
+                        IconButton(onClick = { showInviteMenu = true }) {
+                            Icon(Icons.Outlined.PersonAdd, "邀请发言")
+                        }
+                        DropdownMenu(
+                            expanded = showInviteMenu,
+                            onDismissRequest = { showInviteMenu = false },
+                        ) {
+                            memberAgents.forEach { agent ->
+                                DropdownMenuItem(
+                                    text = { Text(agent.name) },
+                                    onClick = {
+                                        showInviteMenu = false
+                                        isSending = true
+                                        sendJob = scope.launch {
+                                            try {
+                                                appContainer.groupChatEngine.inviteAgent(
+                                                    groupId = groupId,
+                                                    topicId = topicId,
+                                                    agentId = agent.id,
+                                                ).collect { event ->
+                                                    when (event) {
+                                                        is GroupStreamEvent.AgentThinking -> {
+                                                            messages.add(
+                                                                GroupMessage(
+                                                                    id = event.messageId,
+                                                                    role = "assistant",
+                                                                    name = event.agentName,
+                                                                    content = "",
+                                                                    agentId = event.agentId,
+                                                                    isStreaming = true,
+                                                                )
+                                                            )
+                                                            listState.animateScrollToItem(messages.lastIndex)
+                                                        }
+                                                        is GroupStreamEvent.AgentDelta -> {
+                                                            val idx = messages.indexOfLast { it.id == event.messageId }
+                                                            if (idx >= 0) {
+                                                                messages[idx] = messages[idx].copy(
+                                                                    content = messages[idx].content + event.text,
+                                                                )
+                                                                if (idx == messages.lastIndex) {
+                                                                    listState.animateScrollToItem(messages.lastIndex)
+                                                                }
+                                                            }
+                                                        }
+                                                        is GroupStreamEvent.AgentCompleted -> {
+                                                            val idx = messages.indexOfLast { it.id == event.messageId }
+                                                            if (idx >= 0) {
+                                                                messages[idx] = messages[idx].copy(
+                                                                    content = event.fullText,
+                                                                    isStreaming = false,
+                                                                )
+                                                            }
+                                                            listState.animateScrollToItem(messages.lastIndex)
+                                                        }
+                                                        is GroupStreamEvent.AgentError -> {
+                                                            val idx = messages.indexOfLast { it.id == event.messageId }
+                                                            if (idx >= 0) {
+                                                                messages[idx] = messages[idx].copy(
+                                                                    content = "❌ ${event.error}",
+                                                                    isStreaming = false,
+                                                                )
+                                                            }
+                                                        }
+                                                        is GroupStreamEvent.AllCompleted -> {}
+                                                        else -> {}
+                                                    }
+                                                }
+                                            } finally {
+                                                isSending = false
+                                                val streamingIdx = messages.indexOfLast { it.isStreaming }
+                                                if (streamingIdx >= 0) {
+                                                    messages[streamingIdx] = messages[streamingIdx].copy(isStreaming = false)
+                                                }
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -186,100 +282,109 @@ fun GroupChatRoute(
                                 isSending = true
 
                                 sendJob = scope.launch {
-                                    appContainer.groupChatEngine.sendMessage(
-                                        groupId = groupId,
-                                        topicId = topicId,
-                                        userText = text,
-                                    ).collect { event ->
-                                        when (event) {
-                                            is GroupStreamEvent.UserMessageSaved -> {
-                                                messages.add(
-                                                    GroupMessage(
-                                                        id = event.messageId,
-                                                        role = "user",
-                                                        name = "用户",
-                                                        content = text,
-                                                    )
-                                                )
-                                                listState.animateScrollToItem(messages.lastIndex)
-                                            }
-                                            is GroupStreamEvent.AgentThinking -> {
-                                                messages.add(
-                                                    GroupMessage(
-                                                        id = event.messageId,
-                                                        role = "assistant",
-                                                        name = event.agentName,
-                                                        content = "",
-                                                        agentId = event.agentId,
-                                                        isStreaming = true,
-                                                    )
-                                                )
-                                                listState.animateScrollToItem(messages.lastIndex)
-                                            }
-                                            is GroupStreamEvent.AgentDelta -> {
-                                                val idx = messages.indexOfLast { it.id == event.messageId }
-                                                if (idx >= 0) {
-                                                    messages[idx] = messages[idx].copy(
-                                                        content = messages[idx].content + event.text,
-                                                    )
-                                                }
-                                            }
-                                            is GroupStreamEvent.AgentCompleted -> {
-                                                val idx = messages.indexOfLast { it.id == event.messageId }
-                                                if (idx >= 0) {
-                                                    messages[idx] = messages[idx].copy(
-                                                        content = event.fullText,
-                                                        isStreaming = false,
-                                                    )
-                                                }
-                                                listState.animateScrollToItem(messages.lastIndex)
-                                            }
-                                            is GroupStreamEvent.AgentError -> {
-                                                val idx = messages.indexOfLast { it.id == event.messageId }
-                                                if (idx >= 0) {
-                                                    messages[idx] = messages[idx].copy(
-                                                        content = "❌ ${event.error}",
-                                                        isStreaming = false,
-                                                    )
-                                                } else {
+                                    try {
+                                        appContainer.groupChatEngine.sendMessage(
+                                            groupId = groupId,
+                                            topicId = topicId,
+                                            userText = text,
+                                        ).collect { event ->
+                                            when (event) {
+                                                is GroupStreamEvent.UserMessageSaved -> {
                                                     messages.add(
                                                         GroupMessage(
                                                             id = event.messageId,
-                                                            role = "system",
+                                                            role = "user",
+                                                            name = "用户",
+                                                            content = text,
+                                                        )
+                                                    )
+                                                    listState.animateScrollToItem(messages.lastIndex)
+                                                }
+                                                is GroupStreamEvent.AgentThinking -> {
+                                                    messages.add(
+                                                        GroupMessage(
+                                                            id = event.messageId,
+                                                            role = "assistant",
                                                             name = event.agentName,
+                                                            content = "",
+                                                            agentId = event.agentId,
+                                                            isStreaming = true,
+                                                        )
+                                                    )
+                                                    listState.animateScrollToItem(messages.lastIndex)
+                                                }
+                                                is GroupStreamEvent.AgentDelta -> {
+                                                    val idx = messages.indexOfLast { it.id == event.messageId }
+                                                    if (idx >= 0) {
+                                                        messages[idx] = messages[idx].copy(
+                                                            content = messages[idx].content + event.text,
+                                                        )
+                                                        // 流式输出时保持滚动到底部
+                                                        if (idx == messages.lastIndex) {
+                                                            listState.animateScrollToItem(messages.lastIndex)
+                                                        }
+                                                    }
+                                                }
+                                                is GroupStreamEvent.AgentCompleted -> {
+                                                    val idx = messages.indexOfLast { it.id == event.messageId }
+                                                    if (idx >= 0) {
+                                                        messages[idx] = messages[idx].copy(
+                                                            content = event.fullText,
+                                                            isStreaming = false,
+                                                        )
+                                                    }
+                                                    listState.animateScrollToItem(messages.lastIndex)
+                                                }
+                                                is GroupStreamEvent.AgentError -> {
+                                                    val idx = messages.indexOfLast { it.id == event.messageId }
+                                                    if (idx >= 0) {
+                                                        messages[idx] = messages[idx].copy(
                                                             content = "❌ ${event.error}",
+                                                            isStreaming = false,
+                                                        )
+                                                    } else {
+                                                        messages.add(
+                                                            GroupMessage(
+                                                                id = event.messageId,
+                                                                role = "system",
+                                                                name = event.agentName,
+                                                                content = "❌ ${event.error}",
+                                                            )
+                                                        )
+                                                    }
+                                                }
+                                                is GroupStreamEvent.AllCompleted -> {}
+                                                is GroupStreamEvent.NoResponse -> {
+                                                    messages.add(
+                                                        GroupMessage(
+                                                            id = "sys_${System.currentTimeMillis()}",
+                                                            role = "system",
+                                                            name = "系统",
+                                                            content = "没有成员响应（invite_only 模式下需手动邀请）",
+                                                        )
+                                                    )
+                                                }
+                                                is GroupStreamEvent.Error -> {
+                                                    messages.add(
+                                                        GroupMessage(
+                                                            id = "err_${System.currentTimeMillis()}",
+                                                            role = "system",
+                                                            name = "系统",
+                                                            content = "❌ ${event.message}",
                                                         )
                                                     )
                                                 }
                                             }
-                                            is GroupStreamEvent.AllCompleted -> {
-                                                isSending = false
-                                            }
-                                            is GroupStreamEvent.NoResponse -> {
-                                                messages.add(
-                                                    GroupMessage(
-                                                        id = "sys_${System.currentTimeMillis()}",
-                                                        role = "system",
-                                                        name = "系统",
-                                                        content = "没有成员响应（invite_only 模式下需手动邀请）",
-                                                    )
-                                                )
-                                                isSending = false
-                                            }
-                                            is GroupStreamEvent.Error -> {
-                                                messages.add(
-                                                    GroupMessage(
-                                                        id = "err_${System.currentTimeMillis()}",
-                                                        role = "system",
-                                                        name = "系统",
-                                                        content = "❌ ${event.message}",
-                                                    )
-                                                )
-                                                isSending = false
-                                            }
+                                        }
+                                    } finally {
+                                        // 无论正常完成还是 cancel，都确保重置发送状态
+                                        isSending = false
+                                        // cancel 时把正在流式的消息标记为完成
+                                        val streamingIdx = messages.indexOfLast { it.isStreaming }
+                                        if (streamingIdx >= 0) {
+                                            messages[streamingIdx] = messages[streamingIdx].copy(isStreaming = false)
                                         }
                                     }
-                                    isSending = false
                                 }
                             },
                             modifier = Modifier.size(48.dp),

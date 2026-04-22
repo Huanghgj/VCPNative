@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.json.JSONArray
 import org.json.JSONObject
-import kotlin.math.min
 import kotlin.random.Random
 
 /**
@@ -50,7 +49,7 @@ class GroupChatEngine(
             put("name", userId)
             put("content", userText)
             put("timestamp", System.currentTimeMillis())
-            put("id", "msg_user_${System.currentTimeMillis()}")
+            put("id", "msg_user_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}")
         }
         repository.appendMessage(groupId, topicId, userMsg)
         emit(GroupStreamEvent.UserMessageSaved(userMsg.getString("id")))
@@ -65,11 +64,11 @@ class GroupChatEngine(
             return@flow
         }
 
-        // 3. Determine speakers
-        val history = repository.loadHistory(groupId, topicId)
+        // 3. Determine speakers (复用同一份 history，避免重复读文件)
+        var currentHistory = repository.loadHistory(groupId, topicId)
         val speakers = when (group.mode) {
             "sequential" -> agents
-            "naturerandom" -> selectNatureRandomSpeakers(agents, history, group, userText)
+            "naturerandom" -> selectNatureRandomSpeakers(agents, currentHistory, group, userText)
             "invite_only" -> emptyList() // No auto, wait for invite
             else -> agents
         }
@@ -80,9 +79,7 @@ class GroupChatEngine(
         }
 
         // 4. Each speaker responds in sequence
-        // 每轮开始前加载一次 history，每个 Agent 发言后追加到本地引用，
-        // 避免 N 个 Agent 重复读 N 次文件（之前每个 Agent 都 reload 整个 JSON）
-        var currentHistory = repository.loadHistory(groupId, topicId)
+        // 每个 Agent 发言后追加到本地引用，下一个 Agent 不需要重新 reload 文件
         for (agent in speakers) {
             val msgId = "msg_group_${System.currentTimeMillis()}_${agent.id}"
             emit(GroupStreamEvent.AgentThinking(agent.id, agent.name, msgId))
@@ -97,7 +94,10 @@ class GroupChatEngine(
             )
 
             val accumulated = StringBuilder(4096)
+            var persistFailed = false
             response.collect { event ->
+                // 持久化失败后忽略后续事件，避免产生孤立/重复消息喵
+                if (persistFailed) return@collect
                 when (event) {
                     is StreamSessionEvent.TextDelta -> {
                         if (accumulated.length < MAX_ACCUMULATED_CHARS) {
@@ -119,9 +119,16 @@ class GroupChatEngine(
                             put("groupId", groupId)
                             put("topicId", topicId)
                         }
-                        repository.appendMessage(groupId, topicId, assistantMsg)
-                        // 追加到本地 history 引用，下一个 Agent 不需要重新 reload 文件
-                        currentHistory.put(assistantMsg)
+                        try {
+                            repository.appendMessage(groupId, topicId, assistantMsg)
+                            // 追加到本地 history 引用，下一个 Agent 不需要重新 reload 文件
+                            currentHistory.put(assistantMsg)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Failed to persist group message $msgId", e)
+                            persistFailed = true
+                            emit(GroupStreamEvent.AgentError(agent.id, agent.name, msgId, "持久化失败: ${e.message}"))
+                            return@collect
+                        }
                         emit(GroupStreamEvent.AgentCompleted(agent.id, agent.name, msgId, finalText))
                     }
                     is StreamSessionEvent.Failed -> {
@@ -146,6 +153,7 @@ class GroupChatEngine(
                     else -> {}
                 }
             }
+            if (persistFailed) break
         }
 
         emit(GroupStreamEvent.AllCompleted)
@@ -199,6 +207,22 @@ class GroupChatEngine(
                 }
                 is StreamSessionEvent.Failed -> {
                     emit(GroupStreamEvent.AgentError(agentId, agent.name, msgId, event.message))
+                }
+                is StreamSessionEvent.Interrupted -> {
+                    val partial = event.partialText.ifBlank { accumulated.toString() }
+                    if (partial.isNotBlank()) {
+                        val assistantMsg = JSONObject().apply {
+                            put("role", "assistant")
+                            put("name", agent.name)
+                            put("agentId", agentId)
+                            put("content", partial)
+                            put("timestamp", System.currentTimeMillis())
+                            put("id", msgId)
+                            put("interrupted", true)
+                        }
+                        repository.appendMessage(groupId, topicId, assistantMsg)
+                    }
+                    emit(GroupStreamEvent.AgentCompleted(agentId, agent.name, msgId, partial))
                 }
                 else -> {}
             }

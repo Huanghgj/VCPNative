@@ -61,6 +61,7 @@ internal object R {
     const val MODELS = "models"
     const val BRIDGE = "bridge"
     const val SKILLS = "skills"
+    const val TASK_ASSISTANT = "task-assistant"
     const val GROUP_CHAT_LIST = "groupchat/list"
     const val GROUP_TOPICS_PATTERN = "groupchat/topics/{$ARG_AGENT_ID}"
     const val GROUP_CHAT_PATTERN = "groupchat/chat/{$ARG_AGENT_ID}/{$ARG_TOPIC_ID}"
@@ -210,6 +211,7 @@ internal fun NavGraphBuilder.vcpNavigationGraph(
             onOpenSearch = { navController.navigate(R.SEARCH) },
             onOpenGroupChat = { navController.navigate(R.GROUP_CHAT_LIST) },
             onOpenSkills = { navController.navigate(R.SKILLS) },
+            onOpenTaskAssistant = { navController.navigate(R.TASK_ASSISTANT) },
         )
     }
 
@@ -333,6 +335,13 @@ internal fun NavGraphBuilder.vcpNavigationGraph(
 
     composable(R.SKILLS) {
         com.vcpnative.app.feature.skills.SkillsRoute(
+            appContainer = appContainer,
+            onNavigateBack = { navController.navigateUp() },
+        )
+    }
+
+    composable(R.TASK_ASSISTANT) {
+        com.vcpnative.app.feature.taskassistant.TaskAssistantRoute(
             appContainer = appContainer,
             onNavigateBack = { navController.navigateUp() },
         )

@@ -1,12 +1,6 @@
 package com.vcpnative.app.network.llm
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import okhttp3.MediaType.Companion.toMediaType
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -15,27 +9,23 @@ import org.json.JSONObject
 
 /**
  * Google Gemini adapter — uses Gemini's native generateContent API.
- *
- * Inspired by aio-hub's google adapter.
  */
 class GoogleGeminiAdapter(
-    private val httpClient: OkHttpClient,
-) : LlmAdapter {
+    httpClient: OkHttpClient,
+) : BaseSseAdapter(httpClient) {
     override val providerId = "google"
+    override val tag = "GoogleGeminiAdapter"
 
-    override fun chat(
+    override fun buildRequest(
         profile: LlmProfile,
         messages: List<LlmMessage>,
         options: LlmRequestOptions,
-    ): Flow<LlmStreamEvent> = flow {
-        emit(LlmStreamEvent.Started)
-
-        val apiKey = profile.apiKeys.firstOrNull() ?: ""
+        apiKey: String,
+    ): Request {
         val baseUrl = profile.baseUrl.trimEnd('/')
-        val action = if (options.stream) "streamGenerateContent?alt=sse" else "generateContent"
-        val endpoint = "$baseUrl/models/${options.model}:$action&key=$apiKey"
+        val action = if (options.stream) "streamGenerateContent?alt=sse&" else "generateContent?"
+        val endpoint = "$baseUrl/models/${options.model}:${action}key=$apiKey"
 
-        // Build Gemini format: { contents: [{role, parts: [{text}]}], systemInstruction, generationConfig }
         val systemParts = messages.filter { it.role == "system" }
         val chatMessages = messages.filter { it.role != "system" }
 
@@ -49,7 +39,7 @@ class GoogleGeminiAdapter(
                 chatMessages.forEach { msg ->
                     put(JSONObject().apply {
                         put("role", if (msg.role == "assistant") "model" else "user")
-                        put("parts", JSONArray().put(JSONObject().put("text", msg.content)))
+                        put("parts", serializeGeminiParts(msg))
                     })
                 }
             })
@@ -60,54 +50,24 @@ class GoogleGeminiAdapter(
             })
         }
 
-        val request = Request.Builder()
+        return Request.Builder()
             .url(endpoint)
-            .post(body.toString().toRequestBody(JSON_MEDIA))
+            .post(body.toString().toRequestBody(LlmAdapterConstants.JSON_MEDIA))
             .header("Content-Type", "application/json")
             .apply { profile.customHeaders.forEach { (k, v) -> header(k, v) } }
             .build()
+    }
 
-        try {
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    emit(LlmStreamEvent.Error("HTTP ${response.code}: ${response.body.string()}"))
-                    return@flow
-                }
+    override fun parseNonStreamingResponse(json: JSONObject): LlmStreamEvent.Completed {
+        val text = extractGeminiText(json)
+        return LlmStreamEvent.Completed(fullText = text)
+    }
 
-                if (!options.stream) {
-                    val json = JSONObject(response.body.string())
-                    val text = extractGeminiText(json)
-                    emit(LlmStreamEvent.Completed(fullText = text))
-                    return@flow
-                }
-
-                // SSE streaming
-                val source = response.body.source()
-                val accumulated = StringBuilder()
-
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val line = source.readUtf8Line() ?: break
-
-                    if (line.startsWith("data: ")) {
-                        val data = line.removePrefix("data: ").trim()
-                        try {
-                            val chunk = JSONObject(data)
-                            val text = extractGeminiText(chunk)
-                            if (text.isNotEmpty()) {
-                                accumulated.append(text)
-                                emit(LlmStreamEvent.Delta(text))
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-
-                emit(LlmStreamEvent.Completed(fullText = accumulated.toString()))
-            }
-        } catch (e: Exception) {
-            emit(LlmStreamEvent.Error(e.message ?: "请求失败"))
-        }
-    }.flowOn(Dispatchers.IO)
+    override fun processStreamChunk(json: JSONObject): StreamResult {
+        val text = extractGeminiText(json)
+        return if (text.isNotEmpty()) StreamResult.TextDelta(text)
+        else StreamResult.Skip
+    }
 
     private fun extractGeminiText(json: JSONObject): String {
         return json.optJSONArray("candidates")
@@ -122,6 +82,51 @@ class GoogleGeminiAdapter(
     }
 
     companion object {
-        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+        private val DATA_URI_REGEX = LlmAdapterConstants.DATA_URI_REGEX
+
+        private fun serializeGeminiParts(msg: LlmMessage): JSONArray {
+            if (msg.contentParts.isEmpty()) {
+                return JSONArray().put(JSONObject().put("text", msg.content))
+            }
+            return JSONArray().apply {
+                msg.contentParts.forEach { part ->
+                    when (part.type) {
+                        "text" -> put(JSONObject().put("text", part.text.orEmpty()))
+                        "image_url" -> {
+                            val url = part.imageUrl.orEmpty()
+                            val match = DATA_URI_REGEX.find(url)
+                            if (match != null) {
+                                put(JSONObject().put("inlineData", JSONObject()
+                                    .put("mimeType", match.groupValues[1])
+                                    .put("data", match.groupValues[2])))
+                            } else if (url.startsWith("http://") || url.startsWith("https://")) {
+                                val mimeType = guessImageMimeType(url)
+                                put(JSONObject().put("fileData", JSONObject()
+                                    .put("mimeType", mimeType)
+                                    .put("fileUri", url)))
+                            } else {
+                                Log.w("GoogleGeminiAdapter", "Unsupported image source for Gemini, skipping: ${url.take(80)}")
+                                put(JSONObject().put("text", "[不支持的图片来源]"))
+                            }
+                        }
+                        else -> {
+                            Log.w("GoogleGeminiAdapter", "Unknown content part type: ${part.type}")
+                            put(JSONObject().put("text", part.text.orEmpty()))
+                        }
+                    }
+                }
+            }
+        }
+
+        private fun guessImageMimeType(url: String): String {
+            val path = url.substringBefore('?').lowercase()
+            return when {
+                path.endsWith(".png") -> "image/png"
+                path.endsWith(".gif") -> "image/gif"
+                path.endsWith(".webp") -> "image/webp"
+                path.endsWith(".svg") -> "image/svg+xml"
+                else -> "image/jpeg"
+            }
+        }
     }
 }

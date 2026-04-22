@@ -178,7 +178,7 @@ class AppContainer(
     }
 
     val llmAdapterRegistry: LlmAdapterRegistry by lazy {
-        LlmAdapterRegistry(boundedHttpClient)
+        LlmAdapterRegistry(streamingHttpClient)
     }
 
     val llmKeyManager: LlmKeyManager by lazy {
@@ -241,17 +241,17 @@ class AppContainer(
     }
 
     /** 没有读超时——支持慢慢思考的模型（o1, gemini-2.5-pro 等）
-     *  就像猫娘有时候会慢慢组织语言...主人要耐心等♡
-     *  越是深度思考的猫娘，说出来的话越有内容...值得等待喵～ */
+     *  共享 okHttpClient 的连接池和线程池，只覆盖超时配置♡ */
     val streamingHttpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
+        okHttpClient.newBuilder()
             .readTimeout(0, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 
     private val boundedHttpClient: OkHttpClient by lazy {
-        boundedVcpHttpClient()
+        okHttpClient.newBuilder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .build()
     }
 }

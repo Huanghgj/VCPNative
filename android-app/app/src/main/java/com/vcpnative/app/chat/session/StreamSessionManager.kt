@@ -66,25 +66,42 @@ class VcpToolBoxStreamSessionManager(
             }
         }
 
-        val partialTextBuilder = StringBuilder()
+        val partialTextBuilder = StringBuilder(16_384)
         var hasTerminalEvent = false
 
         try {
-            call.execute().use { response ->
-                if (!response.isSuccessful) {
+            val response = try {
+                call.execute()
+            } catch (e: java.net.ConnectException) {
+                // OkHttp 的 retryOnConnectionFailure 已经重试过一次了——
+                // 在应用层再给一次机会：短暂等待后用新 call 重试喵
+                kotlinx.coroutines.delay(800)
+                currentCoroutineContext().ensureActive()
+                val retryCall = okHttpClient.newCall(call.request())
+                activeRequests[compiledRequest.requestId] = ActiveStreamRequest(
+                    serviceConfig = serviceConfig,
+                    call = retryCall,
+                )
+                currentCoroutineContext().job.invokeOnCompletion { cause ->
+                    if (cause is CancellationException) retryCall.cancel()
+                }
+                retryCall.execute()
+            }
+            response.use { resp ->
+                if (!resp.isSuccessful) {
                     hasTerminalEvent = true
                     emit(
                         StreamSessionEvent.Failed(
                             partialText = partialTextBuilder.toString(),
-                            message = extractErrorMessage(response.code, response.body.string()),
+                            message = extractErrorMessage(resp.code, resp.body.string()),
                         ),
                     )
                     return@flow
                 }
 
-                val body = response.body
+                val body = resp.body
 
-                val contentType = response.header("Content-Type").orEmpty()
+                val contentType = resp.header("Content-Type").orEmpty()
                 if (!compiledRequest.stream || !contentType.contains("text/event-stream", ignoreCase = true)) {
                     hasTerminalEvent = true
                     emit(
@@ -166,13 +183,18 @@ class VcpToolBoxStreamSessionManager(
             val interrupted = activeRequest.interrupted.get() ||
                 (error is IOException && error.message?.contains("Canceled", ignoreCase = true) == true)
             val partialText = partialTextBuilder.toString()
+            // 流式中途断连但已有内容 → 当作中断保留部分回复，不算完全失败喵
+            val hasMeaningfulContent = partialText.length > 20
             emit(
                 if (interrupted) {
+                    StreamSessionEvent.Interrupted(partialText = partialText)
+                } else if (hasMeaningfulContent && error is IOException) {
+                    Log.w(TAG, "Stream broken with partial content (${partialText.length} chars), treating as interrupted", error)
                     StreamSessionEvent.Interrupted(partialText = partialText)
                 } else {
                     StreamSessionEvent.Failed(
                         partialText = partialText,
-                        message = error.message ?: "VCP 请求失败",
+                        message = friendlyErrorMessage(error),
                     )
                 },
             )
@@ -318,20 +340,33 @@ class VcpToolBoxStreamSessionManager(
     }
 
     private fun extractJsonError(json: JSONObject): String? {
-        // Check for explicit "error" field first (string or object)
+        // Check for explicit "error" field first
         val errorValue = json.opt("error")
         when (errorValue) {
+            // Standard OpenAI API error format: {"error": {"message":"...","type":"..."}}
+            // This is always a fatal API-level error — treat as such.
+            is JSONObject -> {
+                val errorMessage = errorValue.optString("message").takeIf { it.isNotBlank() }
+                return errorMessage ?: errorValue.toString()
+            }
+            // String-valued "error" may come from VCPToolBox tool status events
+            // (e.g. {"error":"tool timeout","tool":"web_search","status":"failed"}).
+            // Only treat as fatal if the chunk looks like a standalone error response
+            // — NOT a normal streaming chunk that happens to carry a tool error field.
             is String -> if (errorValue.isNotBlank()) {
+                val hasStreamingFields = json.has("choices") || json.has("delta") ||
+                    json.has("type") || json.has("tool") || json.has("status") ||
+                    json.has("tool_name") || json.has("action")
+                if (hasStreamingFields) {
+                    Log.d(TAG, "Ignoring non-fatal string error in data chunk: $errorValue")
+                    return null
+                }
                 val directMessage = json.optString("message").takeIf { it.isNotBlank() }
                 return if (directMessage != null && directMessage != errorValue) {
                     "$errorValue: $directMessage"
                 } else {
                     errorValue
                 }
-            }
-            is JSONObject -> {
-                val errorMessage = errorValue.optString("message").takeIf { it.isNotBlank() }
-                return errorMessage ?: errorValue.toString()
             }
         }
         // Do NOT treat a standalone "message" field as an error — it may be a normal response field
@@ -407,6 +442,36 @@ class VcpToolBoxStreamSessionManager(
         val deltaText: String? = null,
         val errorMessage: String? = null,
     )
+
+    private fun friendlyErrorMessage(error: Throwable): String = when (error) {
+        is java.net.ConnectException ->
+            "无法连接服务器，请检查网络和服务器状态"
+        is java.net.UnknownHostException ->
+            "无法解析服务器地址，请检查网络连接"
+        is java.net.SocketTimeoutException ->
+            "连接超时，服务器响应过慢或不可达"
+        is java.net.SocketException ->
+            "网络连接中断: ${stripConnectionDetails(error.message)}"
+        is javax.net.ssl.SSLException ->
+            "SSL 连接失败: ${stripConnectionDetails(error.message)}"
+        is java.io.EOFException ->
+            "服务器意外断开连接"
+        is IOException ->
+            "网络请求失败: ${stripConnectionDetails(error.message)}"
+        else ->
+            error.message ?: "VCP 请求失败"
+    }
+
+    /** 去掉错误信息里的 IP:port、Connection{...} 等内部细节——用户不需要看到这些喵 */
+    private fun stripConnectionDetails(message: String?): String {
+        if (message.isNullOrBlank()) return "未知错误"
+        return message
+            .replace(Regex("\\s*on\\s+Connection\\{[^}]*}", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("/\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}:\\d+"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .ifBlank { "未知错误" }
+    }
 
     companion object {
         private const val TAG = "VcpStreamSession"

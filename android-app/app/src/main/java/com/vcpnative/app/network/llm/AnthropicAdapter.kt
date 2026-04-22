@@ -1,12 +1,5 @@
 package com.vcpnative.app.network.llm
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -16,26 +9,22 @@ import org.json.JSONObject
 /**
  * Anthropic Claude adapter — uses Claude's native Messages API.
  * Handles Claude-specific features: thinking/reasoning, tool use.
- *
- * Inspired by aio-hub's anthropic adapter.
  */
 class AnthropicAdapter(
-    private val httpClient: OkHttpClient,
-) : LlmAdapter {
+    httpClient: OkHttpClient,
+) : BaseSseAdapter(httpClient) {
     override val providerId = "anthropic"
+    override val tag = "AnthropicAdapter"
 
-    override fun chat(
+    override fun buildRequest(
         profile: LlmProfile,
         messages: List<LlmMessage>,
         options: LlmRequestOptions,
-    ): Flow<LlmStreamEvent> = flow {
-        emit(LlmStreamEvent.Started)
-
+        apiKey: String,
+    ): Request {
         val baseUrl = profile.baseUrl.trimEnd('/')
         val endpoint = "$baseUrl/messages"
-        val apiKey = profile.apiKeys.firstOrNull() ?: ""
 
-        // Claude API: system prompt is separate, not in messages array
         val systemPrompt = messages.filter { it.role == "system" }.joinToString("\n") { it.content }
         val chatMessages = messages.filter { it.role != "system" }
 
@@ -46,7 +35,7 @@ class AnthropicAdapter(
                 chatMessages.forEach { msg ->
                     put(JSONObject().apply {
                         put("role", msg.role)
-                        put("content", msg.content)
+                        put("content", serializeClaudeContent(msg))
                     })
                 }
             })
@@ -56,76 +45,86 @@ class AnthropicAdapter(
             options.topP?.let { put("top_p", it) }
         }
 
-        val request = Request.Builder()
+        return Request.Builder()
             .url(endpoint)
-            .post(body.toString().toRequestBody(JSON_MEDIA))
+            .post(body.toString().toRequestBody(LlmAdapterConstants.JSON_MEDIA))
             .header("Content-Type", "application/json")
             .header("x-api-key", apiKey)
             .header("anthropic-version", "2023-06-01")
             .apply { profile.customHeaders.forEach { (k, v) -> header(k, v) } }
             .build()
+    }
 
-        try {
-            httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    emit(LlmStreamEvent.Error("HTTP ${response.code}: ${response.body.string()}"))
-                    return@flow
-                }
+    override fun parseNonStreamingResponse(json: JSONObject): LlmStreamEvent.Completed {
+        val text = json.optJSONArray("content")
+            ?.let { arr ->
+                (0 until arr.length())
+                    .mapNotNull { arr.optJSONObject(it) }
+                    .filter { it.optString("type") == "text" }
+                    .joinToString("") { it.optString("text", "") }
+            } ?: ""
+        val usage = json.optJSONObject("usage")
+        return LlmStreamEvent.Completed(
+            fullText = text,
+            inputTokens = usage?.optInt("input_tokens", 0) ?: 0,
+            outputTokens = usage?.optInt("output_tokens", 0) ?: 0,
+        )
+    }
 
-                if (!options.stream) {
-                    val json = JSONObject(response.body.string())
-                    val text = json.optJSONArray("content")
-                        ?.let { arr ->
-                            (0 until arr.length())
-                                .mapNotNull { arr.optJSONObject(it) }
-                                .filter { it.optString("type") == "text" }
-                                .joinToString("") { it.optString("text", "") }
-                        } ?: ""
-                    val usage = json.optJSONObject("usage")
-                    emit(LlmStreamEvent.Completed(
-                        fullText = text,
-                        inputTokens = usage?.optInt("input_tokens", 0) ?: 0,
-                        outputTokens = usage?.optInt("output_tokens", 0) ?: 0,
-                    ))
-                    return@flow
-                }
-
-                // SSE streaming — Claude events: content_block_delta, message_stop
-                val source = response.body.source()
-                val accumulated = StringBuilder()
-
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    val line = source.readUtf8Line() ?: break
-
-                    if (line.startsWith("data: ")) {
-                        val data = line.removePrefix("data: ").trim()
-                        try {
-                            val event = JSONObject(data)
-                            val type = event.optString("type")
-                            when (type) {
-                                "content_block_delta" -> {
-                                    val delta = event.optJSONObject("delta")
-                                    val text = delta?.optString("text")
-                                    if (!text.isNullOrEmpty()) {
-                                        accumulated.append(text)
-                                        emit(LlmStreamEvent.Delta(text))
-                                    }
-                                }
-                                "message_stop" -> break
-                            }
-                        } catch (_: Exception) {}
+    override fun processStreamChunk(json: JSONObject): StreamResult {
+        return when (json.optString("type")) {
+            "content_block_delta" -> {
+                val delta = json.optJSONObject("delta") ?: return StreamResult.Skip
+                when (delta.optString("type")) {
+                    "thinking_delta" -> {
+                        val thinking = delta.optString("thinking")
+                        if (thinking.isNotEmpty()) StreamResult.ThinkingDelta(thinking)
+                        else StreamResult.Skip
+                    }
+                    else -> {
+                        val text = delta.optString("text")
+                        if (text.isNotEmpty()) StreamResult.TextDelta(text)
+                        else StreamResult.Skip
                     }
                 }
-
-                emit(LlmStreamEvent.Completed(fullText = accumulated.toString()))
             }
-        } catch (e: Exception) {
-            emit(LlmStreamEvent.Error(e.message ?: "请求失败"))
+            "message_stop" -> StreamResult.EndOfStream
+            else -> StreamResult.Skip
         }
-    }.flowOn(Dispatchers.IO)
+    }
 
     companion object {
-        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+        private val DATA_URI_REGEX = LlmAdapterConstants.DATA_URI_REGEX
+
+        private fun serializeClaudeContent(msg: LlmMessage): Any {
+            if (msg.contentParts.isEmpty()) return msg.content
+            return JSONArray().apply {
+                msg.contentParts.forEach { part ->
+                    put(when (part.type) {
+                        "text" -> JSONObject()
+                            .put("type", "text")
+                            .put("text", part.text.orEmpty())
+                        else -> {
+                            val url = part.imageUrl.orEmpty()
+                            val match = DATA_URI_REGEX.find(url)
+                            if (match != null) {
+                                JSONObject()
+                                    .put("type", "image")
+                                    .put("source", JSONObject()
+                                        .put("type", "base64")
+                                        .put("media_type", match.groupValues[1])
+                                        .put("data", match.groupValues[2]))
+                            } else {
+                                JSONObject()
+                                    .put("type", "image")
+                                    .put("source", JSONObject()
+                                        .put("type", "url")
+                                        .put("url", url))
+                            }
+                        }
+                    })
+                }
+            }
+        }
     }
 }

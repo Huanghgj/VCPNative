@@ -35,6 +35,12 @@ import android.webkit.WebViewClient
 import android.widget.TextView
 import androidx.core.text.HtmlCompat
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -296,6 +302,7 @@ private sealed interface ChatRenderBlock {
     data class Thought(
         val title: String,
         val blocks: List<ChatRenderBlock>,
+        val rawText: String = "",
     ) : ChatRenderBlock
 
     data class DesktopPush(
@@ -1094,6 +1101,7 @@ private object VcpChatMessageParser {
         return ChatRenderBlock.Thought(
             title = title,
             blocks = parseBlocks(body),
+            rawText = body,
         )
     }
 
@@ -1103,6 +1111,7 @@ private object VcpChatMessageParser {
         return ChatRenderBlock.Thought(
             title = "思维链",
             blocks = parseBlocks(body),
+            rawText = body,
         )
     }
 
@@ -5320,11 +5329,28 @@ private fun ThoughtView(
     onLongPress: (() -> Unit)?,
     pauseDynamicContent: Boolean,
 ) {
-    CollapsibleCard(
+    // 预览文本：去掉 Markdown 标记，取前 60 字符
+    val preview = remember(block.rawText) {
+        block.rawText
+            .replace(Regex("[#*`>\\-\\[\\]()]"), "")
+            .replace(Regex("\\n+"), " ")
+            .trim()
+            .take(60)
+            .let { if (block.rawText.length > 60) "$it…" else it }
+    }
+    // 字数统计
+    val charCount = block.rawText.length
+    val badge = when {
+        charCount == 0 -> null
+        charCount > 1000 -> "${charCount / 1000}k字"
+        else -> "${charCount}字"
+    }
+
+    ThoughtCollapsibleCard(
         stableKey = "thought:${block.title}:${block.blocks.hashCode()}",
         title = block.title,
-        subtitle = null,
-        collapsedByDefault = true,
+        preview = preview,
+        badge = badge,
     ) {
         ChatRenderBlocksView(
             blocks = block.blocks,
@@ -5334,6 +5360,123 @@ private fun ThoughtView(
             pauseDynamicContent = pauseDynamicContent,
             nested = true,
         )
+    }
+}
+
+@Composable
+private fun ThoughtCollapsibleCard(
+    stableKey: String,
+    title: String,
+    preview: String,
+    badge: String?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val corner = RoundedCornerShape(14.dp)
+    var expanded by rememberSaveable(stableKey) {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+    // 箭头旋转动画
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "thoughtArrow",
+    )
+    // 猫娘色系
+    val purpleAccent = Color(0xFF9C7CB5)
+    val pinkAccent = Color(0xFFE8618C)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = purpleAccent.copy(alpha = 0.08f),
+                shape = corner,
+            )
+            .border(
+                width = 1.dp,
+                color = purpleAccent.copy(alpha = 0.2f),
+                shape = corner,
+            )
+            .clip(corner)
+            .animateContentSize(),
+    ) {
+        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // 箭头圆形背景
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .background(
+                        color = purpleAccent.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(50),
+                    )
+                    .rotate(arrowRotation),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "▶",
+                    fontSize = 8.sp,
+                    color = purpleAccent,
+                )
+            }
+            // 图标
+            Text(text = "💭", fontSize = 14.sp)
+            // 标签 — 渐变文字
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    brush = Brush.linearGradient(listOf(purpleAccent, pinkAccent)),
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+            // 预览文本
+            if (!expanded && preview.isNotBlank()) {
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontStyle = FontStyle.Italic,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            // 字数 badge
+            if (badge != null) {
+                Text(
+                    text = badge,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = purpleAccent.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .background(
+                            color = purpleAccent.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(10.dp),
+                        )
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
+
+        // Body
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
+                    .padding(top = 0.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                content = content,
+            )
+        }
     }
 }
 

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Task
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -86,6 +87,7 @@ fun ToolsRoute(
     onOpenSearch: () -> Unit = {},
     onOpenGroupChat: () -> Unit = {},
     onOpenSkills: () -> Unit = {},
+    onOpenTaskAssistant: () -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier
@@ -218,6 +220,13 @@ fun ToolsRoute(
                     title = "群聊",
                     subtitle = "多 Agent 协作对话",
                     onClick = onOpenGroupChat,
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.5.dp)
+                ListRow(
+                    icon = Icons.Outlined.Task,
+                    title = "任务助手",
+                    subtitle = "Agent 管理和任务调度",
+                    onClick = onOpenTaskAssistant,
                 )
             }
         }

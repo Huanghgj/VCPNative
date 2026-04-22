@@ -54,7 +54,13 @@ interface WorkspaceRepository {
 
     fun observeMessages(topicId: String): Flow<List<MessageEntity>>
 
+    /** 只观察最近 [limit] 条消息（UI 展示用，省内存省电喵） */
+    fun observeRecentMessages(topicId: String, limit: Int = 80): Flow<List<MessageEntity>>
+
     fun observeMessageAttachments(topicId: String): Flow<List<MessageAttachmentEntity>>
+
+    /** 只观察指定消息 ID 集合的附件（配合 UI 消息窗口，避免全话题查询） */
+    fun observeMessageAttachmentsByIds(messageIds: List<String>): Flow<List<MessageAttachmentEntity>>
 
     suspend fun createPlaceholderAgent(): AgentEntity
 
@@ -81,6 +87,7 @@ interface WorkspaceRepository {
         content: String,
         status: String,
         syncCompatHistory: Boolean = true,
+        touchTopic: Boolean = true,
     )
 
     suspend fun deleteMessage(topicId: String, messageId: String)
@@ -104,6 +111,9 @@ interface WorkspaceRepository {
     suspend fun findMessageAttachment(attachmentId: String): MessageAttachmentEntity?
 
     suspend fun loadMessages(topicId: String): List<MessageEntity>
+
+    /** 加载整个话题的所有附件（不受 UI 消息窗口限制） */
+    suspend fun loadMessageAttachmentsByTopic(topicId: String): List<MessageAttachmentEntity>
 
     /** Replace all messages in a topic from a JSON array (used by voicechat save). */
     suspend fun replaceMessages(topicId: String, messagesJson: org.json.JSONArray)
@@ -153,8 +163,15 @@ class RoomWorkspaceRepository(
     override fun observeMessages(topicId: String): Flow<List<MessageEntity>> =
         messageDao.observeByTopic(topicId)
 
+    override fun observeRecentMessages(topicId: String, limit: Int): Flow<List<MessageEntity>> =
+        messageDao.observeRecent(topicId, limit)
+
     override fun observeMessageAttachments(topicId: String): Flow<List<MessageAttachmentEntity>> =
         messageAttachmentDao.observeByTopic(topicId)
+
+    override fun observeMessageAttachmentsByIds(messageIds: List<String>): Flow<List<MessageAttachmentEntity>> =
+        if (messageIds.isEmpty()) kotlinx.coroutines.flow.flowOf(emptyList())
+        else messageAttachmentDao.observeByMessageIds(messageIds)
 
     override suspend fun createPlaceholderAgent(): AgentEntity {
         val nextIndex = agentDao.count() + 1
@@ -237,7 +254,11 @@ class RoomWorkspaceRepository(
             }
             topicDao.touch(topicId, timestamp)
         }
-        syncCompatHistory(topicId)
+        // draft/streaming 中间态不导出 compat 历史——省 IO 喵
+        val isIntermediate = status in setOf("draft", "streaming")
+        if (!isIntermediate) {
+            syncCompatHistory(topicId, debounce = false)
+        }
         return message
     }
 
@@ -247,6 +268,7 @@ class RoomWorkspaceRepository(
         content: String,
         status: String,
         syncCompatHistory: Boolean,
+        touchTopic: Boolean,
     ) {
         val timestamp = System.currentTimeMillis()
         database.withTransaction {
@@ -256,7 +278,9 @@ class RoomWorkspaceRepository(
                 status = status,
                 updatedAt = timestamp,
             )
-            topicDao.touch(topicId, timestamp)
+            if (touchTopic) {
+                topicDao.touch(topicId, timestamp)
+            }
         }
         if (syncCompatHistory) {
             val isStreaming = status in setOf("draft", "streaming")
@@ -330,26 +354,31 @@ class RoomWorkspaceRepository(
     override suspend fun loadMessages(topicId: String): List<MessageEntity> =
         messageDao.loadByTopic(topicId)
 
+    override suspend fun loadMessageAttachmentsByTopic(topicId: String): List<MessageAttachmentEntity> =
+        messageAttachmentDao.loadByTopic(topicId)
+
     override suspend fun replaceMessages(topicId: String, messagesJson: org.json.JSONArray) {
-        messageDao.deleteByTopic(topicId)
-        val now = System.currentTimeMillis()
-        for (i in 0 until messagesJson.length()) {
-            val obj = messagesJson.optJSONObject(i) ?: continue
-            val role = obj.optString("role", "user")
-            val content = obj.optString("content", "")
-            val id = obj.optString("id", java.util.UUID.randomUUID().toString())
-            val ts = obj.optLong("timestamp", now + i)
-            messageDao.insert(
-                MessageEntity(
-                    id = id,
-                    topicId = topicId,
-                    role = role,
-                    content = content,
-                    status = "complete",
-                    createdAt = ts,
-                    updatedAt = ts,
-                ),
-            )
+        database.withTransaction {
+            messageDao.deleteByTopic(topicId)
+            val now = System.currentTimeMillis()
+            for (i in 0 until messagesJson.length()) {
+                val obj = messagesJson.optJSONObject(i) ?: continue
+                val role = obj.optString("role", "user")
+                val content = obj.optString("content", "")
+                val id = obj.optString("id", java.util.UUID.randomUUID().toString())
+                val ts = obj.optLong("timestamp", now + i)
+                messageDao.insert(
+                    MessageEntity(
+                        id = id,
+                        topicId = topicId,
+                        role = role,
+                        content = content,
+                        status = "complete",
+                        createdAt = ts,
+                        updatedAt = ts,
+                    ),
+                )
+            }
         }
     }
 
@@ -374,13 +403,14 @@ class RoomWorkspaceRepository(
     private val historySyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lastHistorySyncTimeMs = ConcurrentHashMap<String, AtomicLong>()
     private val pendingHistorySyncJobs = ConcurrentHashMap<String, Job>()
-    // 流式传输期间节流：避免每个 TextDelta 都写一次文件（几十毫秒一次太频繁）
-    private val historySyncMinIntervalMs = 2_000L
-    // 非流式变更也做轻度节流：编辑/删除消息后 500ms 内的连续操作合并为一次写入
-    private val historySyncNonStreamDebounceMs = 500L
+    // 流式传输期间节流：避免每个 TextDelta 都写一次文件
+    // 从 2s 提到 5s——流式期间中间状态写入文件毫无意义，省电喵
+    private val historySyncMinIntervalMs = 5_000L
+    // 非流式变更节流：编辑/删除消息后连续操作合并为一次写入
+    private val historySyncNonStreamDebounceMs = 1_500L
 
     private suspend fun syncCompatHistory(topicId: String, debounce: Boolean = false) {
-        val lastSyncRef = lastHistorySyncTimeMs.getOrPut(topicId) { AtomicLong(0L) }
+        val lastSyncRef = lastHistorySyncTimeMs.computeIfAbsent(topicId) { AtomicLong(0L) }
         val interval = if (debounce) historySyncMinIntervalMs else historySyncNonStreamDebounceMs
         val elapsed = System.currentTimeMillis() - lastSyncRef.get()
 
@@ -776,6 +806,28 @@ private fun MessageAttachmentEntity.fileId(): String =
     } else {
         id
     }
+
+/** Entity → Model 转换：供 ViewModel 创建分支等场景使用 */
+fun MessageAttachmentEntity.toChatAttachment(): ChatAttachment =
+    ChatAttachment(
+        id = id,
+        fileId = if (hash.isNotBlank()) "attachment_$hash" else id,
+        name = name,
+        mimeType = mimeType,
+        size = size,
+        src = src,
+        internalFileName = internalFileName,
+        internalPath = internalPath,
+        hash = hash,
+        createdAt = createdAt,
+        extractedText = extractedText,
+        imageFrames = runCatching {
+            imageFramesJson?.let { json ->
+                val arr = JSONArray(json)
+                List(arr.length()) { i -> arr.getString(i) }
+            }.orEmpty()
+        }.getOrDefault(emptyList()),
+    )
 
 private fun ChatAttachment.toEntity(
     messageId: String,

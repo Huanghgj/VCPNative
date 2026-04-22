@@ -268,7 +268,7 @@ private fun TopicsScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                items(topics, key = { it.id }) { topic ->
+                items(topics, key = { it.id }, contentType = { "topic" }) { topic ->
                     Box {
                         Card(
                             modifier = Modifier
